@@ -12910,6 +12910,66 @@ export function toolAccessService(
       } else if (dedicatedAgentId) {
         // Managed OAuth creates the credential-bearing grant in the callback.
         // Keep the connection free of organization secrets from the outset.
+        // A credential supplied at connect time (a personal access token) has no
+        // callback to wait for: commit it to the agent's own grant here, exactly
+        // as "Just me" does for a user, or the agent is left with no identity.
+        if (credentialSecretRefs.length > 0) {
+          const [existingGrant] = await db
+            .select()
+            .from(connectionGrants)
+            .where(
+              and(
+                eq(connectionGrants.connectionId, connectionRow.id),
+                eq(connectionGrants.kind, "agent"),
+                eq(connectionGrants.subjectAgentId, dedicatedAgentId),
+              ),
+            )
+            .limit(1);
+          const grantValues = {
+            credentialSecretRefs,
+            status: "active" as const,
+            revokedAt: null,
+            revokedByAgentId: null,
+            revokedByUserId: null,
+            updatedAt: new Date(),
+          };
+          const [changedGrant] = existingGrant
+            ? await db
+                .update(connectionGrants)
+                .set(grantValues)
+                .where(eq(connectionGrants.id, existingGrant.id))
+                .returning()
+            : await db
+                .insert(connectionGrants)
+                .values({
+                  companyId,
+                  connectionId: connectionRow.id,
+                  kind: "agent",
+                  subjectAgentId: dedicatedAgentId,
+                  ...grantValues,
+                  isDefault: false,
+                  createdByUserId: actor?.actorType === "user" ? actor.actorId : null,
+                })
+                .returning();
+          if (!changedGrant)
+            throw new Error("Failed to create the agent's connection grant");
+          if (revivedConnectionPrevious) {
+            revivedGrantMutation = { previous: existingGrant ?? null, current: changedGrant };
+          }
+          await db.insert(toolAccessAuditEvents).values({
+            companyId,
+            connectionId: connectionRow.id,
+            actorType: actor?.actorType ?? "system",
+            actorId: actor?.actorId ?? "system",
+            action: existingGrant ? "connection_grant.updated" : "connection_grant.created",
+            outcome: "success",
+            reasonCode: existingGrant ? "dedicated_identity_reconnected" : "dedicated_identity_created",
+            details: {
+              kind: "agent",
+              credentialSecretRefCount: credentialSecretRefs.length,
+            },
+          });
+        }
       } else {
         const organizationGrant = await ensureDefaultOrganizationGrant(
           connectionRow,
@@ -13940,6 +14000,66 @@ export function toolAccessService(
   }
 
   /**
+   * The agent whose dedicated identity a `per_agent` reconnect replaces: its
+   * single agent grant, or, for a connection saved before key setup created
+   * that grant, its single agent install. Without this the new key landed in
+   * the organization slot, which no GitHub identity resolver reads.
+   */
+  async function fixedDedicatedIdentityForReconnect(
+    connection: typeof toolConnections.$inferSelect,
+  ): Promise<{
+    subjectAgentId: string;
+    grant: typeof connectionGrants.$inferSelect | null;
+  } | null> {
+    if (connection.credentialPolicy !== "per_agent") return null;
+    const agentGrants = await db
+      .select()
+      .from(connectionGrants)
+      .where(
+        and(
+          eq(connectionGrants.companyId, connection.companyId),
+          eq(connectionGrants.connectionId, connection.id),
+          eq(connectionGrants.kind, "agent"),
+        ),
+      );
+    if (agentGrants.length > 1)
+      throw conflict(
+        "This connection has several dedicated agent identities. Reconnect it from the agent it belongs to.",
+      );
+    if (agentGrants[0]?.subjectAgentId)
+      return { subjectAgentId: agentGrants[0].subjectAgentId, grant: agentGrants[0] };
+    const installs = await db
+      .select({ targetId: toolConnectionInstalls.targetId })
+      .from(toolConnectionInstalls)
+      .where(
+        and(
+          eq(toolConnectionInstalls.companyId, connection.companyId),
+          eq(toolConnectionInstalls.connectionId, connection.id),
+          eq(toolConnectionInstalls.targetType, "agent"),
+        ),
+      );
+    const installedIds = [...new Set(installs.map((row) => row.targetId))];
+    const agentIds = installedIds.length
+      ? (
+          await db
+            .select({ id: agents.id })
+            .from(agents)
+            .where(
+              and(
+                eq(agents.companyId, connection.companyId),
+                inArray(agents.id, installedIds),
+              ),
+            )
+        ).map((row) => row.id)
+      : [];
+    if (agentIds.length !== 1)
+      throw conflict(
+        "Choose the agent this dedicated key belongs to: connect the app again as that agent.",
+      );
+    return { subjectAgentId: agentIds[0]!, grant: null };
+  }
+
+  /**
    * Replace the credential(s) on an existing connection and re-run the health
    * check — the "Replace key" / reconnect flow (M7, PAP-10859). Rotates the
    * secret in place when a ref already exists so the connection keeps its
@@ -14002,9 +14122,14 @@ export function toolAccessService(
       undefined,
       actor,
     );
+    const dedicatedIdentity = personalIdentity
+      ? null
+      : await fixedDedicatedIdentityForReconnect(connection);
     const credentialSecretRefs = [
-      ...(personalIdentity?.grant?.credentialSecretRefs ??
-        connection.credentialSecretRefs),
+      ...(dedicatedIdentity
+        ? (dedicatedIdentity.grant?.credentialSecretRefs ?? [])
+        : (personalIdentity?.grant?.credentialSecretRefs ??
+          connection.credentialSecretRefs)),
     ];
     const credentialRefs: McpConnectionCredentialRef[] = [
       ...(connection.credentialRefs ?? []),
@@ -14090,13 +14215,49 @@ export function toolAccessService(
           });
         }
       }
+      if (dedicatedIdentity) {
+        const grantValues = {
+          credentialSecretRefs,
+          status: "active" as const,
+          revokedAt: null,
+          revokedByAgentId: null,
+          revokedByUserId: null,
+          updatedAt,
+        };
+        if (dedicatedIdentity.grant) {
+          await tx
+            .update(connectionGrants)
+            .set(grantValues)
+            .where(eq(connectionGrants.id, dedicatedIdentity.grant.id));
+        } else {
+          await tx.insert(connectionGrants).values({
+            companyId: connection.companyId,
+            connectionId: connection.id,
+            kind: "agent",
+            subjectAgentId: dedicatedIdentity.subjectAgentId,
+            ...grantValues,
+            isDefault: false,
+            createdByUserId: actor?.actorType === "user" ? actor.actorId : null,
+          });
+        }
+        await tx.insert(toolAccessAuditEvents).values({
+          companyId: connection.companyId,
+          connectionId: connection.id,
+          actorType: actor?.actorType ?? "system",
+          actorId: actor?.actorId ?? "system",
+          action: dedicatedIdentity.grant ? "connection_grant.updated" : "connection_grant.created",
+          outcome: "success",
+          reasonCode: dedicatedIdentity.grant ? "dedicated_identity_reconnected" : "dedicated_identity_created",
+          details: { kind: "agent", credentialSecretRefCount: credentialSecretRefs.length },
+        });
+      }
       const [nextConnection] = await tx
         .update(toolConnections)
         .set({
           credentialRefs,
           // Personal reconnect rotates the existing user's grant. The
           // connection-level organization slot stays exactly as it was.
-          credentialSecretRefs: personalIdentity
+          credentialSecretRefs: personalIdentity || dedicatedIdentity
             ? connection.credentialSecretRefs
             : credentialSecretRefs,
           lastError: null,
@@ -14108,7 +14269,7 @@ export function toolAccessService(
     });
     await syncCredentialBindings(
       updated,
-      personalIdentity ? credentialSecretRefs : [],
+      personalIdentity || dedicatedIdentity ? credentialSecretRefs : [],
     );
     const health = await checkConnectionHealth(updated.id, actor);
     const refresh = await refreshCatalog(updated.id, actor, {

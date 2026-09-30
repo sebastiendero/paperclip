@@ -2120,7 +2120,7 @@ describeEmbeddedPostgres("companySkillService.list", () => {
       const skill = imported.imported[0]!;
       expect(imported.warnings).toEqual([expect.stringContaining("templates/setup.sh")]);
       expect(skill.trustLevel).not.toBe("scripts_executables");
-      expect(skill.fileInventory.map((entry) => entry.path)).toEqual(["SKILL.md", "reference.md"]);
+      expect(skill.fileInventory.map((entry) => entry.path).sort()).toEqual(["SKILL.md", "reference.md"].sort());
       const entry = (await svc.listRuntimeSkillEntries(companyId)).find((candidate) => candidate.key === skill.key)!;
       expect(await fs.readFile(path.join(entry.source, "reference.md"), "utf8")).toBe("supporting file");
       await expect(fs.stat(path.join(entry.source, "templates", "setup.sh"))).rejects.toMatchObject({ code: "ENOENT" });

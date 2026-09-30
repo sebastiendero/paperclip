@@ -246,6 +246,54 @@ describe("managed AI connections", () => {
     await expect(service.save(companyId, "bob", reconnect, "fixture-stale", undefined, beforeRevocation)).rejects.toThrow("changed");
     await expect(service.select({ ...input, userId: "bob" })).rejects.toThrow("Reconnect");
   });
+  describe("reconnect after the account was removed or revoked", () => {
+    const member = async (userId: string) =>
+      db.insert(companyMemberships).values({ companyId, principalId: userId, principalType: "user", status: "active", membershipRole: "member" });
+    const personal = (name: string, connectionId?: string) =>
+      ({ ...binding, ownership: "personal" as const, name, apiKey: "fixture", agentIds: [], allAgents: true, ...(connectionId ? { connectionId } : {}) });
+    const selectFor = (userId: string) => service.select({ ...input, userId });
+
+    it("reconnects a removed personal account instead of failing on its leftover secret definition", async () => {
+      // Removing the connection deletes the grant's secret value and clears its
+      // refs, but the per-grant definition `ai_<grantId>` survives. Reconnect
+      // must reuse it rather than create a duplicate.
+      const userId = `removed-${randomUUID()}`;
+      await member(userId);
+      const account = await service.save(companyId, userId, personal("Removed account"), "fixture-before-removal");
+      await toolAccessService(db).archiveConnection(account.connectionId, companyId, { actorType: "user", actorId: userId });
+      const result = await service.save(companyId, userId, personal("Removed account", account.connectionId), "fixture-after-removal");
+      expect(result).toEqual(account);
+      expect(await service.credential(await selectFor(userId))).toBe("fixture-after-removal");
+      // Reconnecting again rotates the reused slot in place.
+      await service.save(companyId, userId, personal("Removed account", account.connectionId), "fixture-second-reconnect");
+      expect(await service.credential(await selectFor(userId))).toBe("fixture-second-reconnect");
+    });
+
+    it("moves the personal default off a revoked account when the user reconnects another account", async () => {
+      const userId = `revoked-default-${randomUUID()}`;
+      await member(userId);
+      const old = await service.save(companyId, userId, personal("Old account"), "fixture-old");
+      const other = await service.save(companyId, userId, personal("Other account"), "fixture-other");
+      await toolAccessService(db).revokeConnectionGrant(old.connectionId, old.grantId, { actorType: "user", actorId: userId });
+      await toolAccessService(db).revokeConnectionGrant(other.connectionId, other.grantId, { actorType: "user", actorId: userId });
+      await expect(selectFor(userId)).rejects.toThrow("Reconnect or validate the selected AI account");
+      await service.save(companyId, userId, personal("Other account", other.connectionId), "fixture-other-reconnected");
+      const selected = await selectFor(userId);
+      expect(selected.grant.id).toBe(other.grantId);
+      expect(await service.credential(selected)).toBe("fixture-other-reconnected");
+      const [methodDefault] = await db.select().from(aiConnectionDefaults).where(and(eq(aiConnectionDefaults.companyId, companyId), eq(aiConnectionDefaults.userId, userId)));
+      expect(methodDefault?.grantId).toBe(other.grantId);
+    });
+
+    it("keeps a usable personal default when another account is reconnected", async () => {
+      const userId = `healthy-default-${randomUUID()}`;
+      await member(userId);
+      const first = await service.save(companyId, userId, personal("First account"), "fixture-first");
+      const second = await service.save(companyId, userId, personal("Second account"), "fixture-second");
+      await service.save(companyId, userId, personal("Second account", second.connectionId), "fixture-second-reconnected");
+      expect((await selectFor(userId)).grant.id).toBe(first.grantId);
+    });
+  });
   it("rejects invalid purpose/transport combinations in the database", async () => {
     const selected = await service.select({ ...input, userId: "alice" });
     await expect(db.update(toolConnections).set({ transport: "mcp_remote" }).where(eq(toolConnections.id, selected.connection.id))).rejects.toThrow();

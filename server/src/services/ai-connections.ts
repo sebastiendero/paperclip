@@ -1,6 +1,6 @@
 import { syncConnectionCredentialBindings } from "./connection-credential-bindings.js";
 import { randomUUID } from "node:crypto";
-import { and, eq, inArray, or } from "drizzle-orm";
+import { and, eq, inArray, ne, or } from "drizzle-orm";
 import {
   type Db,
   authUsers,
@@ -548,22 +548,73 @@ export function aiConnectionService(db: Db) {
           { userId },
         );
       else if (input.ownership === "personal") {
-        const definition = await secrets.createUserSecretDefinition(
-          companyId,
-          {
-            key: `ai_${grantId.replaceAll("-", "_")}`,
-            name: input.name,
-            provider: "local_encrypted",
-          },
-          { userId },
-        );
-        const secret = await secrets.createCurrentUserSecretValue(
-          companyId,
-          userId,
-          { definitionId: definition.id, value: verifiedCredential },
-          { userId },
-        );
-        secretId = secret.id;
+        const slotKey = `ai_${grantId.replaceAll("-", "_")}`;
+        // Removing or revoking an account deletes its value and clears the
+        // grant's refs, but the per-grant definition survives. Reuse it on
+        // reconnect instead of failing on a duplicate key.
+        const [leftover] = reconnect
+          ? await tx
+              .select()
+              .from(userSecretDefinitions)
+              .where(
+                and(
+                  eq(userSecretDefinitions.companyId, companyId),
+                  eq(userSecretDefinitions.key, slotKey),
+                  ne(userSecretDefinitions.status, "deleted"),
+                ),
+              )
+          : [];
+        // The key is derived from the grant id, so only reuse a definition this
+        // owner created as a Paperclip-stored slot; anything else is not ours
+        // to write a credential into.
+        if (
+          leftover &&
+          (leftover.createdByUserId !== userId ||
+            leftover.provider !== "local_encrypted" ||
+            leftover.managedMode !== "paperclip_managed" ||
+            leftover.providerConfigId !== null)
+        )
+          throw forbidden("Credential ownership mismatch");
+        if (leftover && leftover.status !== "active")
+          await tx
+            .update(userSecretDefinitions)
+            .set({ status: "active", updatedByUserId: userId, updatedAt: new Date() })
+            .where(eq(userSecretDefinitions.id, leftover.id));
+        const definitionId =
+          leftover?.id ??
+          (
+            await secrets.createUserSecretDefinition(
+              companyId,
+              { key: slotKey, name: input.name, provider: "local_encrypted" },
+              { userId },
+            )
+          ).id;
+        const [existingValue] = leftover
+          ? await tx
+              .select({ id: companySecrets.id })
+              .from(companySecrets)
+              .where(
+                and(
+                  eq(companySecrets.companyId, companyId),
+                  eq(companySecrets.scope, "user"),
+                  eq(companySecrets.ownerUserId, userId),
+                  eq(companySecrets.userSecretDefinitionId, leftover.id),
+                  ne(companySecrets.status, "deleted"),
+                ),
+              )
+          : [];
+        if (existingValue) {
+          await secrets.rotate(existingValue.id, { value: verifiedCredential }, { userId });
+          secretId = existingValue.id;
+        } else
+          secretId = (
+            await secrets.createCurrentUserSecretValue(
+              companyId,
+              userId,
+              { definitionId, value: verifiedCredential },
+              { userId },
+            )
+          ).id;
       } else
         secretId = (
           await secrets.create(
@@ -725,8 +776,77 @@ export function aiConnectionService(db: Db) {
           })
           .onConflictDoNothing();
         await tx.insert(aiProviderDefaults).values({ companyId, userId, provider: input.provider, grantId }).onConflictDoNothing();
+        // A new account never takes over an existing default: the owner picks
+        // it. Reconnecting one specific account is that explicit choice when
+        // the current default is unusable (revoked, removed, disabled or
+        // unhealthy), which otherwise fails every responsible-user run with
+        // "Reconnect or validate the selected AI account".
+        if (reconnect) {
+          const unusable = async (current: string | null) => {
+            if (!current) return true;
+            const [target] = await tx
+              .select({ grant: connectionGrants, connection: toolConnections })
+              .from(connectionGrants)
+              .innerJoin(toolConnections, eq(toolConnections.id, connectionGrants.connectionId))
+              .where(and(eq(connectionGrants.companyId, companyId), eq(connectionGrants.id, current)));
+            return (
+              !target ||
+              target.grant.status !== "active" ||
+              !target.connection.enabled ||
+              target.connection.status !== "active" ||
+              target.connection.healthStatus !== "ok"
+            );
+          };
+          const [methodDefault] = await tx
+            .select()
+            .from(aiConnectionDefaults)
+            .where(
+              and(
+                eq(aiConnectionDefaults.companyId, companyId),
+                eq(aiConnectionDefaults.userId, userId),
+                eq(aiConnectionDefaults.provider, input.provider),
+                eq(aiConnectionDefaults.method, input.method),
+              ),
+            )
+            .for("update");
+          if (methodDefault && methodDefault.grantId !== grantId && (await unusable(methodDefault.grantId)))
+            await tx
+              .update(aiConnectionDefaults)
+              .set({ grantId, updatedAt: new Date() })
+              .where(eq(aiConnectionDefaults.id, methodDefault.id));
+          const [providerDefault] = await tx
+            .select()
+            .from(aiProviderDefaults)
+            .where(
+              and(
+                eq(aiProviderDefaults.companyId, companyId),
+                eq(aiProviderDefaults.userId, userId),
+                eq(aiProviderDefaults.provider, input.provider),
+              ),
+            )
+            .for("update");
+          if (providerDefault && providerDefault.grantId !== grantId && (await unusable(providerDefault.grantId)))
+            await tx
+              .update(aiProviderDefaults)
+              .set({ grantId, updatedAt: new Date() })
+              .where(eq(aiProviderDefaults.id, providerDefault.id));
+        }
       }
-      if (!reconnect) {
+      // Removing a connection archives it and its application and deletes its
+      // installs. Reconnecting it restores them from the reconnect request.
+      const restoringArchived = reconnect?.connection.status === "archived";
+      if (restoringArchived)
+        await tx
+          .update(toolApplications)
+          .set({ status: "active", archivedAt: null, updatedAt: new Date() })
+          .where(and(eq(toolApplications.id, app.id), eq(toolApplications.status, "archived")));
+      const existingInstalls = restoringArchived
+        ? await tx
+            .select({ id: toolConnectionInstalls.id })
+            .from(toolConnectionInstalls)
+            .where(and(eq(toolConnectionInstalls.companyId, companyId), eq(toolConnectionInstalls.connectionId, id)))
+        : [];
+      if (!reconnect || (restoringArchived && existingInstalls.length === 0)) {
         const installs = input.allAgents
           ? [{ targetType: "company" as const, targetId: companyId }]
           : input.agentIds.map((targetId) => ({

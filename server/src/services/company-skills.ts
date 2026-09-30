@@ -279,6 +279,28 @@ function isPinnedCommitRef(value: string | null | undefined) {
   return Boolean(value && /^[0-9a-f]{40}$/i.test(value.trim()));
 }
 
+/**
+ * An external skill never brings executable files into Paperclip. Its scripts
+ * are dropped from the inventory, which is the only list runtime
+ * materialization and file reads follow, so they are never fetched, written or
+ * run. The skill imports as the documentation it also is. Returns the dropped
+ * paths; `assertImportedSkillSourceAllowed` still rejects any script left over.
+ */
+function dropExternalSkillScripts(skill: ImportedSkill): string[] {
+  if (!EXTERNAL_SKILL_SOURCE_TYPES.has(skill.sourceType)) return [];
+  const dropped = skill.fileInventory
+    .filter((entry) => entry.kind === "script")
+    .map((entry) => entry.path);
+  if (dropped.length === 0) return [];
+  skill.fileInventory = skill.fileInventory.filter((entry) => entry.kind !== "script");
+  skill.trustLevel = deriveTrustLevel(skill.fileInventory);
+  return dropped;
+}
+
+function droppedScriptsWarning(skill: ImportedSkill, dropped: string[]) {
+  return `Skill "${skill.slug}" was imported without ${dropped.length} executable file(s) (${dropped.join(", ")}): Paperclip does not import scripts from external sources.`;
+}
+
 function assertImportedSkillSourceAllowed(skill: ImportedSkill) {
   if (!EXTERNAL_SKILL_SOURCE_TYPES.has(skill.sourceType)) return;
   if (skill.trustLevel === "scripts_executables") {
@@ -6024,6 +6046,9 @@ export function companySkillService(db: Db) {
     // particular, the safe default "skip" path still validates the incoming
     // package before returning the existing skill.
     for (const skill of importedSkills) {
+      const dropped = dropExternalSkillScripts(skill);
+      if (dropped.length > 0)
+        logger.warn({ companyId, skillSlug: skill.slug, dropped }, droppedScriptsWarning(skill, dropped));
       assertImportedSkillKeyAllowed(skill);
       assertImportedSkillSourceAllowed(skill);
     }
@@ -6154,6 +6179,9 @@ export function companySkillService(db: Db) {
   ): Promise<CompanySkill[]> {
     const out: CompanySkill[] = [];
     for (const skill of imported) {
+      const dropped = dropExternalSkillScripts(skill);
+      if (dropped.length > 0)
+        logger.warn({ companyId, skillSlug: skill.slug, dropped }, droppedScriptsWarning(skill, dropped));
       assertImportedSkillKeyAllowed(skill);
       assertImportedSkillSourceAllowed(skill);
       const existing = await getByKey(companyId, skill.key, database);
@@ -6273,6 +6301,10 @@ export function companySkillService(db: Db) {
         }
         skill.key = deriveCanonicalSkillKey(companyId, skill);
       }
+    }
+    for (const skill of filteredSkills) {
+      const dropped = dropExternalSkillScripts(skill);
+      if (dropped.length > 0) warnings.push(droppedScriptsWarning(skill, dropped));
     }
     const imported = await upsertImportedSkills(companyId, filteredSkills);
     return { imported, warnings };

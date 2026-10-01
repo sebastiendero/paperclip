@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { AlertTriangle, CheckCircle2, MessageCircleQuestion, ShieldCheck } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Eye, MessageCircleQuestion, ShieldCheck } from "lucide-react";
 import type { BoardQuestionItem } from "@paperclipai/shared";
 import { Link } from "@/lib/router";
 import { Card } from "@/components/ui/card";
@@ -67,7 +67,7 @@ export function BoardQuestionsInboxView({ companyId, searchQuery }: BoardQuestio
   return (
     <ul data-testid="board-questions-list" className="divide-y divide-border rounded-md border border-border">
       {items.map((item) => {
-        const Icon = item.kind === "approval_stage" ? ShieldCheck : MessageCircleQuestion;
+        const Icon = item.kind === "approval_stage" ? ShieldCheck : item.kind === "review_stage" ? Eye : MessageCircleQuestion;
         return (
           <li key={item.id}>
             <Link

@@ -145,7 +145,7 @@ export function boardQuestionsService(db: Db) {
       }));
 
       // An issue that already shows a pending card is answered through that
-      // card; listing its approval stage too would count one wait twice.
+      // card; listing its approval or review stage too would count one wait twice.
       const issuesWithCard = new Set(visibleInteractions.map((row) => row.issueId));
       const reviewRows = await db
         .select({
@@ -163,21 +163,30 @@ export function boardQuestionsService(db: Db) {
       for (const row of reviewRows) {
         if (issuesWithCard.has(row.id)) continue;
         const state = parseIssueExecutionState(row.executionState);
-        if (!state || state.status !== "pending" || state.currentStageType !== "approval") continue;
+        if (!state || state.status !== "pending") continue;
+        // A review stage held by a user is one the agent reviewers handed back
+        // to the board after repeated refusals.
+        const stageKind = state.currentStageType === "approval"
+          ? "approval_stage"
+          : state.currentStageType === "review"
+            ? "review_stage"
+            : null;
+        if (!stageKind) continue;
         const participant = state.currentParticipant;
         if (participant?.type !== "user") continue;
         if (participant.userId && participant.userId !== userId) continue;
         items.push({
-          id: `approval_stage:${row.id}`,
-          kind: "approval_stage",
+          id: `${stageKind}:${row.id}`,
+          kind: stageKind,
           interactionId: null,
           interactionKind: null,
           issueId: row.id,
           issueIdentifier: row.identifier,
           issueTitle: row.title,
           issueStatus: row.status,
-          title: "Approval requested",
-          question: clip(readString(state.reviewRequest?.instructions)) ?? `Approve "${row.title}"?`,
+          title: stageKind === "approval_stage" ? "Approval requested" : "Review escalated to you",
+          question: clip(readString(state.reviewRequest?.instructions))
+            ?? (stageKind === "approval_stage" ? `Approve "${row.title}"?` : `Review "${row.title}"?`),
           createdAt: row.updatedAt.toISOString(),
           href: issueHref(row),
         });

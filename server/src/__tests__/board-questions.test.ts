@@ -210,6 +210,56 @@ describeEmbeddedPostgres("board questions", () => {
     });
   });
 
+  it("lists a review stage escalated to the board user, not agent or other-user reviews", async () => {
+    const { companyId, agentId, prefix } = await seedCompany();
+    const escalatedIssue = await insertIssue({
+      companyId,
+      identifier: "BQ-7",
+      title: "Reviewer refused three times",
+      status: "in_review",
+      executionState: { ...approvalStage({ type: "user", userId: BOARD_USER }), currentStageType: "review" },
+    });
+    await insertIssue({
+      companyId,
+      identifier: "BQ-8",
+      title: "Agent still reviewing",
+      status: "in_review",
+      executionState: { ...approvalStage({ type: "agent", agentId }), currentStageType: "review" },
+    });
+    await insertIssue({
+      companyId,
+      identifier: "BQ-9",
+      title: "Escalated to someone else",
+      status: "in_review",
+      executionState: { ...approvalStage({ type: "user", userId: "other-user" }), currentStageType: "review" },
+    });
+
+    const result = await boardQuestionsService(db).list(companyId, BOARD_USER);
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]).toMatchObject({
+      id: `review_stage:${escalatedIssue}`,
+      kind: "review_stage",
+      issueIdentifier: "BQ-7",
+      title: "Review escalated to you",
+      href: `/${prefix}/issues/BQ-7`,
+    });
+  });
+
+  it("does not double count an escalated review whose issue already shows a card", async () => {
+    const { companyId } = await seedCompany();
+    const issueId = await insertIssue({
+      companyId,
+      identifier: "BQ-1",
+      title: "Needs review",
+      status: "in_review",
+      executionState: { ...approvalStage({ type: "user", userId: BOARD_USER }), currentStageType: "review" },
+    });
+    await insertCard({ companyId, issueId, title: "Accept the work?" });
+
+    const result = await boardQuestionsService(db).list(companyId, BOARD_USER);
+    expect(result.items.map((item) => item.kind)).toEqual(["interaction"]);
+  });
+
   it("shows a card addressed to an agent once that agent can no longer act", async () => {
     const { companyId, agentId } = await seedCompany();
     const issueId = await insertIssue({ companyId, identifier: "BQ-1", title: "Open task", status: "todo" });

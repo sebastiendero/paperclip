@@ -1,16 +1,16 @@
 /**
  * One thing waiting on the signed-in board user: a pending thread interaction
  * card addressed to them, or an issue whose current execution stage is a
- * board approval.
+ * board approval or a review escalated to the board.
  */
-export type BoardQuestionKind = "interaction" | "approval_stage";
+export type BoardQuestionKind = "interaction" | "approval_stage" | "review_stage";
 
 export interface BoardQuestionItem {
-  /** Stable key: `interaction:<id>` or `approval_stage:<issueId>`. */
+  /** Stable key: `interaction:<id>`, `approval_stage:<issueId>` or `review_stage:<issueId>`. */
   id: string;
   kind: BoardQuestionKind;
   interactionId: string | null;
-  /** Interaction kind (`ask_user_questions`, `request_confirmation`, ...); null for approval stages. */
+  /** Interaction kind (`ask_user_questions`, `request_confirmation`, ...); null for stages. */
   interactionKind: string | null;
   issueId: string;
   issueIdentifier: string | null;

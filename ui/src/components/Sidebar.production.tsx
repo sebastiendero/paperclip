@@ -1,5 +1,6 @@
 import {
   Inbox,
+  MessageCircleQuestion,
   ListChecks,
   CircleDot,
   Target,
@@ -37,6 +38,7 @@ import { instanceSettingsApi } from "../api/instanceSettings";
 import { queryKeys } from "../lib/queryKeys";
 import { attentionBadgeCount } from "../lib/attention";
 import { useInboxBadge } from "../hooks/useInboxBadge";
+import { useBoardQuestions } from "../hooks/useBoardQuestions";
 import { usePublishSharedQueryData, useSharedPollingQuery } from "../hooks/useSharedPolling";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn, SIDEBAR_RAIL_HIDDEN_LABEL } from "../lib/utils";
@@ -54,6 +56,7 @@ export function Sidebar() {
   const { collapsed, peeking } = useSidebar();
   const rail = collapsed && !peeking;
   const inboxBadge = useInboxBadge(selectedCompanyId);
+  const boardQuestionCount = useBoardQuestions(selectedCompanyId).data?.count ?? 0;
   const { data: experimentalSettings } = useQuery({
     queryKey: queryKeys.instance.experimentalSettings,
     queryFn: () => instanceSettingsApi.getExperimental(),
@@ -161,6 +164,14 @@ export function Sidebar() {
             badgeLabel="unread"
             badgeTone={inboxBadge.failedRuns > 0 ? "danger" : "default"}
             alert={inboxBadge.failedRuns > 0}
+          />
+          <SidebarNavItem
+            to="/inbox/questions"
+            label="Questions"
+            icon={MessageCircleQuestion}
+            badge={boardQuestionCount}
+            badgeLabel="waiting for you"
+            badgeTone="warning"
           />
           {showDecisions ? (
             <SidebarNavItem

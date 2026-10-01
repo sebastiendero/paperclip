@@ -757,7 +757,23 @@ export function interactionResolverAudience(
   };
 }
 
-function collapsePendingConfirmationsToNewest<T extends {
+/**
+ * Whether a pending interaction belongs in a board user's queue: unaddressed,
+ * addressed to that user, or addressed to an agent that can no longer act
+ * (paused/terminated), in which case the board is the fallback resolver.
+ */
+export function isInteractionAddressedToBoardUser(
+  row: { addresseeAgentId: string | null; addresseeUserId: string | null },
+  userId: string | null | undefined,
+  companyAgentMap: ReadonlyMap<string, AgentOrgRow>,
+  companyAgentRows: AgentOrgRow[],
+) {
+  return (row.addresseeAgentId === null
+    || !evaluateAgentInvokability(companyAgentMap.get(row.addresseeAgentId), companyAgentRows).invokable)
+    && (row.addresseeUserId === null || row.addresseeUserId === userId);
+}
+
+export function collapsePendingConfirmationsToNewest<T extends {
   id: string;
   issueId: string;
   kind: string;
@@ -1207,9 +1223,7 @@ export function attentionService(db: Db, serviceOptions: AttentionServiceOptions
         : [];
       const companyAgentMap = new Map(companyAgentRows.map((agent) => [agent.id, agent]));
       const boardInteractionRows = interactionRows.filter((row) =>
-        (row.addresseeAgentId === null ||
-          !evaluateAgentInvokability(companyAgentMap.get(row.addresseeAgentId), companyAgentRows).invokable)
-        && (row.addresseeUserId === null || row.addresseeUserId === options.userId)
+        isInteractionAddressedToBoardUser(row, options.userId, companyAgentMap, companyAgentRows)
       );
       const visibleInteractionRows = collapsePendingConfirmationsToNewest(boardInteractionRows);
       const [interactionIssueMap, interactionImageMap, interactionPlanDocumentMap] = await Promise.all([

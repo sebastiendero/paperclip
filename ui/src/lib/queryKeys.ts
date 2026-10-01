@@ -649,6 +649,8 @@ export const queryKeys = {
   },
   dashboard: (companyId: string) => ["dashboard", companyId] as const,
   attention: (companyId: string) => ["attention", companyId] as const,
+  // Nested under attention so every attention invalidation refreshes it too.
+  boardQuestions: (companyId: string) => ["attention", companyId, "board-questions"] as const,
   decisions: {
     list: (companyId: string, status?: string) =>
       ["decisions", companyId, status ?? "__all-statuses__"] as const,

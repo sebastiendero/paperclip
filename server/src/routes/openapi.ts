@@ -5473,6 +5473,15 @@ registry.registerPath({
   responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden },
 });
 
+registry.registerPath({
+  method: "get",
+  path: "/api/companies/{companyId}/board-questions",
+  tags: ["inbox"],
+  summary: "List pending thread cards and board approval stages waiting on the signed-in board user",
+  request: { params: z.object({ companyId: z.string() }) },
+  responses: { 200: r.ok(), 401: r.unauthorized, 403: r.forbidden },
+});
+
 // ─── Decisions ──────────────────────────────────────────────────────────────
 
 // Decision queues and triage

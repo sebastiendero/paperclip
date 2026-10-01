@@ -1424,6 +1424,15 @@ function invalidateActivityQueries(
           });
         }
       }
+      if (
+        action?.startsWith("issue.thread_interaction_") ||
+        action === "issue.updated" ||
+        action === "issue.status_decision_recorded"
+      ) {
+        // A card answered, a task closed or an approval stage advanced all
+        // change what is waiting on the board.
+        queryClient.invalidateQueries({ queryKey: queryKeys.boardQuestions(companyId) });
+      }
     }
     return;
   }

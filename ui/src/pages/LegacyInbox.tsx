@@ -82,6 +82,8 @@ import {
 import { IssueFiltersPopover } from "../components/IssueFiltersPopover";
 import { InboxArchiveButton, IssueRow } from "../components/IssueRow";
 import { BlockedInboxView } from "../components/BlockedInboxView";
+import { BoardQuestionsInboxView } from "../components/BoardQuestionsInboxView";
+import { useBoardQuestions } from "../hooks/useBoardQuestions";
 import { SwipeToArchive } from "../components/SwipeToArchive";
 
 import { StatusIcon } from "../components/StatusIcon";
@@ -728,9 +730,11 @@ export function Inbox() {
     || pathSegment === "all"
     || pathSegment === "unread"
     || pathSegment === "blocked"
+    || pathSegment === "questions"
       ? pathSegment
       : "mine";
   const canArchiveFromTab = isMineInboxTab(tab);
+  const boardQuestionCount = useBoardQuestions(selectedCompanyId).data?.count ?? 0;
   const issueLinkState = useMemo(
     () =>
       createIssueDetailLocationState(
@@ -2260,7 +2264,9 @@ export function Inbox() {
     .map((issue) => issue.id);
   const canMarkAllRead = unreadIssueIds.length > 0;
   const activeIssueFilterCount = countActiveIssueFilters(issueFilters, true);
-  const showGeneralIssueToolbarControls = tab !== "blocked";
+  // Blocked and Questions render their own lists instead of the inbox sections.
+  const showsOwnList = tab === "blocked" || tab === "questions";
+  const showGeneralIssueToolbarControls = !showsOwnList;
   return (
     <div className="space-y-6">
       <div className="space-y-2">
@@ -2307,6 +2313,10 @@ export function Inbox() {
               },
               { value: "unread", label: "Unread" },
               { value: "blocked", label: "Blocked" },
+              {
+                value: "questions",
+                label: boardQuestionCount > 0 ? `Questions (${boardQuestionCount})` : "Questions",
+              },
               { value: "all", label: "All" },
             ]}
           />
@@ -2586,6 +2596,10 @@ export function Inbox() {
       {approvalsError && <p className="text-sm text-destructive">{approvalsError.message}</p>}
       {actionError && <p className="text-sm text-destructive">{actionError}</p>}
 
+      {tab === "questions" ? (
+        <BoardQuestionsInboxView companyId={selectedCompanyId!} searchQuery={searchQuery} />
+      ) : null}
+
       {tab === "blocked" ? (
         <BlockedInboxView
           presentation="legacy"
@@ -2607,11 +2621,11 @@ export function Inbox() {
         />
       ) : null}
 
-      {tab !== "blocked" && !allLoaded && visibleSections.length === 0 && (
+      {!showsOwnList && !allLoaded && visibleSections.length === 0 && (
         <PageSkeleton variant="inbox" />
       )}
 
-      {tab !== "blocked" && allLoaded && visibleSections.length === 0 && (
+      {!showsOwnList && allLoaded && visibleSections.length === 0 && (
         <EmptyState
           icon={searchQuery.trim() ? Search : InboxIcon}
           message={
@@ -2628,7 +2642,7 @@ export function Inbox() {
         />
       )}
 
-      {tab !== "blocked" && showWorkItemsSection && (
+      {!showsOwnList && showWorkItemsSection && (
         <>
           {showSeparatorBefore("work_items") && <Separator />}
           <div>

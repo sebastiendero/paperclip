@@ -14,6 +14,7 @@ const mockHeartbeatsApi = vi.hoisted(() => ({
 
 const mockAttentionApi = vi.hoisted(() => ({
   list: vi.fn(),
+  boardQuestions: vi.fn(),
 }));
 
 const mockInstanceSettingsApi = vi.hoisted(() => ({
@@ -154,6 +155,7 @@ describe("Sidebar", () => {
     document.body.appendChild(container);
     mockHeartbeatsApi.liveRunsForCompany.mockResolvedValue([]);
     mockAttentionApi.list.mockResolvedValue({ items: [] });
+    mockAttentionApi.boardQuestions.mockResolvedValue({ items: [], count: 0 });
     mockSidebar.isMobile = false;
     mockSidebar.collapsed = false;
     mockSidebar.collapseLocked = false;
@@ -350,6 +352,23 @@ describe("Sidebar", () => {
     const root = await renderSidebar();
 
     expect(container.textContent).not.toContain("Workspaces");
+
+    flushSync(() => {
+      root.unmount();
+    });
+  });
+
+  it("links Questions to the Inbox tab with the number of questions waiting", async () => {
+    mockInstanceSettingsApi.getExperimental.mockResolvedValue({});
+    mockAttentionApi.boardQuestions.mockResolvedValue({ items: [], count: 3 });
+    const root = await renderSidebar();
+
+    const primaryNavLinks = [...container.querySelectorAll("nav > div:first-child a")];
+    const inboxIndex = primaryNavLinks.findIndex((anchor) => anchor.getAttribute("href") === "/inbox");
+    const questionsLink = primaryNavLinks.find((anchor) => anchor.getAttribute("href") === "/inbox/questions");
+    expect(questionsLink?.textContent).toContain("Questions");
+    expect(questionsLink?.textContent).toContain("3");
+    expect(primaryNavLinks.indexOf(questionsLink!)).toBe(inboxIndex + 1);
 
     flushSync(() => {
       root.unmount();

@@ -423,6 +423,7 @@ function boardRoutes(streamlinedUiEnabled: boolean) {
       <Route path="inbox/recent" element={<Inbox />} />
       <Route path="inbox/unread" element={<Inbox />} />
       <Route path="inbox/blocked" element={<Inbox />} />
+      <Route path="inbox/questions" element={<Inbox />} />
       <Route path="inbox/all" element={<Inbox />} />
       <Route path="inbox/requests" element={<JoinRequestQueue />} />
       <Route path="inbox/new" element={<Navigate to="/inbox/mine" replace />} />

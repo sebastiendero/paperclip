@@ -1,5 +1,6 @@
 import {
   Inbox,
+  MessageCircleQuestion,
   ListChecks,
   CircleCheck,
   Target,
@@ -41,6 +42,7 @@ import { instanceSettingsApi } from "../api/instanceSettings";
 import { queryKeys } from "../lib/queryKeys";
 import { attentionBadgeCount } from "../lib/attention";
 import { useInboxBadge } from "../hooks/useInboxBadge";
+import { useBoardQuestions } from "../hooks/useBoardQuestions";
 import { useStreamlinedUiEnabled } from "../hooks/useStreamlinedUiEnabled";
 import { usePublishSharedQueryData, useSharedPollingQuery } from "../hooks/useSharedPolling";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
@@ -62,6 +64,7 @@ export function Sidebar({ children }: { children?: ReactNode }) {
   const { enabled: streamlinedUiEnabled } = useStreamlinedUiEnabled();
   const rail = collapsed && !peeking;
   const inboxBadge = useInboxBadge(selectedCompanyId);
+  const boardQuestionCount = useBoardQuestions(selectedCompanyId).data?.count ?? 0;
   const { data: experimentalSettings } = useQuery({
     queryKey: queryKeys.instance.experimentalSettings,
     queryFn: () => instanceSettingsApi.getExperimental(),
@@ -174,6 +177,14 @@ export function Sidebar({ children }: { children?: ReactNode }) {
             badgeLabel="unread"
             badgeTone={inboxBadge.failedRuns > 0 ? "danger" : "default"}
             alert={inboxBadge.failedRuns > 0}
+          />
+          <SidebarNavItem
+            to="/inbox/questions"
+            label="Questions"
+            icon={MessageCircleQuestion}
+            badge={boardQuestionCount}
+            badgeLabel="waiting for you"
+            badgeTone="warning"
           />
           {showDecisions ? (
             <SidebarNavItem

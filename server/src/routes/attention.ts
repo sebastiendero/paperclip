@@ -2,6 +2,7 @@ import { Router } from "express";
 import type { Db } from "@paperclipai/db";
 import type { AttentionSortMode } from "@paperclipai/shared";
 import { attentionService } from "../services/attention.js";
+import { boardQuestionsService } from "../services/board-questions.js";
 import { badRequest } from "../errors.js";
 import { assertBoard, assertCompanyAccess } from "./authz.js";
 
@@ -14,6 +15,7 @@ function optionalQueryString(value: unknown, field: string) {
 export function attentionRoutes(db: Db) {
   const router = Router();
   const svc = attentionService(db);
+  const questions = boardQuestionsService(db);
 
   router.get("/companies/:companyId/attention", async (req, res) => {
     const companyId = req.params.companyId as string;
@@ -52,6 +54,19 @@ export function attentionRoutes(db: Db) {
       limit,
     });
     res.json(feed);
+  });
+
+  // Pending thread cards and board approval stages waiting on the signed-in
+  // board user; feeds the Inbox "Questions" tab and its sidebar badge.
+  router.get("/companies/:companyId/board-questions", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    assertBoard(req);
+    if (!req.actor.userId) {
+      res.status(403).json({ error: "Board user context required" });
+      return;
+    }
+    res.json(await questions.list(companyId, req.actor.userId));
   });
 
   return router;

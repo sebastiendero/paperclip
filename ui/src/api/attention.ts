@@ -1,4 +1,4 @@
-import type { AttentionFeed, AttentionFeedQuery } from "@paperclipai/shared";
+import type { AttentionFeed, AttentionFeedQuery, BoardQuestionsResponse } from "@paperclipai/shared";
 import { api } from "./client";
 
 export const attentionApi = {
@@ -21,4 +21,10 @@ export const attentionApi = {
     const query = params.toString();
     return api.get<AttentionFeed>(`/companies/${companyId}/attention${query ? `?${query}` : ""}`);
   },
+  /**
+   * Pending thread cards and board approval stages waiting on the signed-in
+   * board user (Inbox "Questions" tab and its sidebar badge).
+   */
+  boardQuestions: (companyId: string) =>
+    api.get<BoardQuestionsResponse>(`/companies/${companyId}/board-questions`),
 };

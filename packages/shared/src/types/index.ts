@@ -56,6 +56,11 @@ export type {
 } from "./attention.js";
 export { ATTENTION_SOURCE_KINDS } from "./attention.js";
 export type {
+  BoardQuestionItem,
+  BoardQuestionKind,
+  BoardQuestionsResponse,
+} from "./board-questions.js";
+export type {
   DecisionQueue,
   DecisionQueueItem,
   DecisionQueueSeedRule,

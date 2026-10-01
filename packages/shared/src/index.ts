@@ -200,6 +200,11 @@ export type {
 } from "./types/attention.js";
 export { ATTENTION_SOURCE_KINDS } from "./types/attention.js";
 export type {
+  BoardQuestionItem,
+  BoardQuestionKind,
+  BoardQuestionsResponse,
+} from "./types/board-questions.js";
+export type {
   DecisionQueue,
   DecisionQueueItem,
   DecisionQueueSeedRule,

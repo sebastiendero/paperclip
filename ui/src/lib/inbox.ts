@@ -28,7 +28,7 @@ export const INBOX_GROUP_BY_KEY = "paperclip:inbox:group-by";
 export const INBOX_FILTER_PREFERENCES_KEY_PREFIX = "paperclip:inbox:filters";
 export const INBOX_COLLAPSED_GROUPS_KEY_PREFIX = "paperclip:inbox:collapsed-groups";
 export const INBOX_COLLAPSED_PARENTS_KEY_PREFIX = "paperclip:inbox:collapsed-parents";
-export type InboxTab = "mine" | "recent" | "unread" | "blocked" | "all";
+export type InboxTab = "mine" | "recent" | "unread" | "blocked" | "questions" | "all";
 export type InboxCategoryFilter =
   | "everything"
   | "issues_i_touched"
@@ -684,6 +684,7 @@ export function loadLastInboxTab(): InboxTab {
       || raw === "recent"
       || raw === "mine"
       || raw === "blocked"
+      || raw === "questions"
     ) return raw;
     if (raw === "new") return "mine";
     return "mine";

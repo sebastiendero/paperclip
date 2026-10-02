@@ -196,6 +196,7 @@ import {
 import { buildIssueChanges } from "./issue-change-receipt.js";
 import { projectSafeChatPublication } from "./chat-publication-projection.js";
 import { issueThreadInteractionAttentionAgentAllowed } from "./issue-thread-interaction-resolution.js";
+import { assertNoForbiddenTerms } from "./forbidden-terms.js";
 
 const ALL_ISSUE_STATUSES = [
   "backlog",
@@ -9733,6 +9734,19 @@ export function issueService(db: Db) {
       data: IssueCreateInput,
       dbOrTx: Db | DbTransaction = db,
     ) => {
+      assertNoForbiddenTerms(
+        [
+          { field: "title", text: data.title },
+          { field: "description", text: data.description },
+          { field: "initialPlan", text: data.initialPlan },
+        ],
+        {
+          surface: "issue_create",
+          companyId,
+          authorAgentId: data.createdByAgentId ?? null,
+          authorUserId: data.createdByUserId ?? null,
+        },
+      );
       const {
         initialPlan,
         labelIds: inputLabelIds,
@@ -10239,6 +10253,15 @@ export function issueService(db: Db) {
       rows: ImportIssueRow[],
     ): Promise<void> => {
       if (rows.length === 0) return;
+      for (const row of rows) {
+        assertNoForbiddenTerms(
+          [
+            { field: "title", text: row.title },
+            { field: "description", text: row.description },
+          ],
+          { surface: "issue_import", issueId: row.id, companyId },
+        );
+      }
       const isolatedWorkspacesEnabled = (
         await instanceSettings.getExperimental()
       ).enableIsolatedWorkspaces;
@@ -10459,6 +10482,15 @@ export function issueService(db: Db) {
       rows: ImportIssueCommentRow[],
     ): Promise<void> => {
       if (rows.length === 0) return;
+      for (const row of rows) {
+        assertNoForbiddenTerms([{ field: "body", text: row.body }], {
+          surface: "issue_comment_import",
+          issueId: row.issueId,
+          companyId: row.companyId,
+          authorAgentId: row.authorAgentId ?? null,
+          authorUserId: row.authorUserId ?? null,
+        });
+      }
       const censorUsernameInLogs = (await instanceSettings.getGeneral())
         .censorUsernameInLogs;
       await db.transaction(async (tx) => {
@@ -10575,6 +10607,18 @@ export function issueService(db: Db) {
       postCommitActions?: IssuePostCommitAction[],
       options: { bindRuntimeSharedWorkspace?: boolean } = {},
     ) => {
+      assertNoForbiddenTerms(
+        [
+          { field: "title", text: data.title },
+          { field: "description", text: data.description },
+        ],
+        {
+          surface: "issue_update",
+          issueId: id,
+          authorAgentId: data.actorAgentId ?? null,
+          authorUserId: data.actorUserId ?? null,
+        },
+      );
       const ownedActivityPublications: ActivityPublication[] = [];
       const activityPublications =
         postCommitActivityPublications ?? ownedActivityPublications;
@@ -12130,6 +12174,14 @@ export function issueService(db: Db) {
       },
       dbOrTx: any = db,
     ): Promise<IssueComment> {
+      // Checked before the transaction fence and the idempotent-replay lookup
+      // so every comment author, including system flows, goes through it.
+      assertNoForbiddenTerms([{ field: "body", text: body }], {
+        surface: "issue_comment",
+        issueId,
+        authorAgentId: actor.agentId ?? null,
+        authorUserId: actor.userId ?? null,
+      });
       if (dbOrTx === db && (actor.runId || actor.userId)) {
         const append = () =>
           db.transaction(async (tx) => {

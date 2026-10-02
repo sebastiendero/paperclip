@@ -891,4 +891,38 @@ describe("issue update comment wakeups", () => {
     expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
   });
 
+
+  it("refuses a PATCH whose comment contains a forbidden term before writing anything", async () => {
+    const { mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const path = await import("node:path");
+    const { FORBIDDEN_TERMS_FILE_ENV, resetForbiddenTermsCache } = await import("../services/forbidden-terms.js");
+    const dir = mkdtempSync(path.join(tmpdir(), "paperclip-forbidden-patch-"));
+    const file = path.join(dir, "terms.txt");
+    // Invented name only.
+    writeFileSync(file, "Zéphirine Duploux\n", "utf8");
+    const previous = process.env[FORBIDDEN_TERMS_FILE_ENV];
+    process.env[FORBIDDEN_TERMS_FILE_ENV] = file;
+    resetForbiddenTermsCache();
+    try {
+      const existing = makeIssue({ assigneeAgentId: ASSIGNEE_AGENT_ID, assigneeUserId: null });
+      mockIssueService.getById.mockResolvedValue(existing);
+
+      const res = await request(await createApp())
+        .patch(`/api/issues/${existing.id}`)
+        .send({ status: "in_progress", comment: "Ask zephirine duploux for the invoice" });
+
+      expect(res.status).toBe(422);
+      expect(res.body.code).toBe("forbidden_term");
+      expect(res.body.error).toContain("character 4");
+      expect(JSON.stringify(res.body).toLowerCase()).not.toContain("duploux");
+      expect(mockIssueService.update).not.toHaveBeenCalled();
+      expect(mockIssueService.addComment).not.toHaveBeenCalled();
+    } finally {
+      if (previous === undefined) delete process.env[FORBIDDEN_TERMS_FILE_ENV];
+      else process.env[FORBIDDEN_TERMS_FILE_ENV] = previous;
+      resetForbiddenTermsCache();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

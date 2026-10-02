@@ -106,6 +106,7 @@ import {
   loadPipelineConversationBodyDocumentContext,
 } from "../services/pipeline-conversation-context.js";
 import { resolveActorSourceTrustForIssue } from "../services/source-trust.js";
+import { assertNoForbiddenTerms } from "../services/forbidden-terms.js";
 import {
   formatPipelineCaseOutputContextMarkdown,
   pipelineCaseOutputsService,
@@ -1480,6 +1481,16 @@ export function pipelineRoutes(db: Db, options: Parameters<typeof pipelineServic
     const caseId = req.params.caseId as string;
     const key = parseDocumentKey(req.params.key);
     const companyId = await assertCaseAccess(db, req, caseId);
+    // The case "body" document is mirrored into the linked conversation issue
+    // as an issue document without going through documentService.
+    assertNoForbiddenTerms(
+      [
+        { field: "title", text: req.body.title },
+        { field: "body", text: req.body.body },
+        { field: "changeSummary", text: req.body.changeSummary },
+      ],
+      { surface: "pipeline_case_document", companyId },
+    );
     const pipelineId = await resolveCasePipelineId(db, { companyId, caseId });
     await assertPipelineWriteAccess(req, { access, companyId, pipelineId });
     const actor = actorForMutation(req);
@@ -1696,6 +1707,13 @@ export function pipelineRoutes(db: Db, options: Parameters<typeof pipelineServic
         .limit(1)
         .then((rows) => rows[0] ?? null);
       if (!sourceRevision) throw notFound("Pipeline case document revision not found");
+      assertNoForbiddenTerms(
+        [
+          { field: "title", text: sourceRevision.title },
+          { field: "body", text: sourceRevision.body },
+        ],
+        { surface: "pipeline_case_document_restore", companyId },
+      );
       if (existing.document.latestRevisionId === sourceRevision.id) {
         throw conflict("Selected revision is already the latest revision", {
           currentRevisionId: existing.document.latestRevisionId,

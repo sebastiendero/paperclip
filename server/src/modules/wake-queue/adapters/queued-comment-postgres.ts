@@ -10,6 +10,7 @@ import {
   withQueuedCommentIdsInWakePayload,
 } from "../../../services/issue-queued-comment-queue.js";
 import { logActivity as persistActivityLogRow, type ActivityPublication } from "../../../services/activity-log.js";
+import { assertNoForbiddenTerms } from "../../../services/forbidden-terms.js";
 import { decideQueuedCommentWakeLookup } from "../domain/policy.js";
 import { parseObject, readNonEmptyString } from "../domain/values.js";
 import { QueuedCommentMutationError } from "../application/queued-comment-use-cases.js";
@@ -46,6 +47,11 @@ export type QueuedCommentQueuePostgresAdapterDeps = {
 function buildTransaction(tx: Db, companyId: string, deps: QueuedCommentQueuePostgresAdapterDeps): QueuedCommentQueueTransaction {
   return {
     async updateCommentBody({ issueId, commentId, body, updatedAt }) {
+      assertNoForbiddenTerms([{ field: "body", text: body }], {
+        surface: "issue_queued_comment_edit",
+        issueId,
+        companyId,
+      });
       const updated = await tx
         .update(issueComments)
         .set({ body, updatedAt })

@@ -6,6 +6,7 @@ import { isSystemIssueDocumentKey, issueDocumentKeySchema } from "@paperclipai/s
 import { conflict, notFound, unprocessable } from "../errors.js";
 import { isUniqueViolation } from "../db-errors.js";
 import { insertRowsInChunks } from "./batch-insert.js";
+import { assertNoForbiddenTerms } from "./forbidden-terms.js";
 import type { ImportIssueDocumentRow } from "./import-write-types.js";
 
 function normalizeDocumentKey(key: string) {
@@ -208,6 +209,19 @@ export function documentService(db: Db) {
       sourceTrust?: typeof documents.$inferInsert.sourceTrust;
       lockedDocumentStrategy?: "conflict" | "create_new_document";
     }) => {
+      assertNoForbiddenTerms(
+        [
+          { field: "title", text: input.title },
+          { field: "body", text: input.body },
+          { field: "changeSummary", text: input.changeSummary },
+        ],
+        {
+          surface: "issue_document",
+          issueId: input.issueId,
+          authorAgentId: input.createdByAgentId ?? null,
+          authorUserId: input.createdByUserId ?? null,
+        },
+      );
       const key = normalizeDocumentKey(input.key);
       const issue = await db
         .select({ id: issues.id, companyId: issues.companyId })
@@ -523,6 +537,15 @@ export function documentService(db: Db) {
      */
     createIssueDocumentsForImport: async (rows: ImportIssueDocumentRow[]): Promise<void> => {
       if (rows.length === 0) return;
+      for (const row of rows) {
+        assertNoForbiddenTerms(
+          [
+            { field: "title", text: row.title },
+            { field: "body", text: row.body },
+          ],
+          { surface: "issue_document_import", issueId: row.issueId, companyId: row.companyId },
+        );
+      }
       const now = new Date();
       const documentRows: Array<Record<string, unknown>> = [];
       const revisionRows: Array<Record<string, unknown>> = [];
@@ -620,6 +643,21 @@ export function documentService(db: Db) {
           .then((rows) => rows[0] ?? null);
 
         if (!revision) throw notFound("Document revision not found");
+        // Restoring republishes old text as a new revision, so a revision
+        // stored before the filter was enabled must not come back through it.
+        assertNoForbiddenTerms(
+          [
+            { field: "title", text: revision.title },
+            { field: "body", text: revision.body },
+          ],
+          {
+            surface: "issue_document_restore",
+            issueId: input.issueId,
+            companyId: existing.companyId,
+            authorAgentId: input.createdByAgentId ?? null,
+            authorUserId: input.createdByUserId ?? null,
+          },
+        );
         if (existing.latestRevisionId === revision.id) {
           throw conflict("Selected revision is already the latest revision", {
             currentRevisionId: existing.latestRevisionId,

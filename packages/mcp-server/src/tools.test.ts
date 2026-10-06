@@ -30,6 +30,16 @@ describe("paperclip MCP tools", () => {
     vi.restoreAllMocks();
   });
 
+  it("routes shared browser actions through the authenticated task run", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(mockJsonResponse({ url: "https://example.com/", revision: 1 }));
+    vi.stubGlobal("fetch", fetchMock);
+    await getTool("paperclipBrowserNavigate").execute({ issueId: "task-1", url: "https://example.com/" });
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(String(url)).toBe("http://localhost:3100/api/issues/task-1/browser/action");
+    expect((init.headers as Record<string, string>)["X-Paperclip-Run-Id"]).toBe("33333333-3333-3333-3333-333333333333");
+    expect(JSON.parse(String(init.body))).toEqual({ type: "navigate", url: "https://example.com/" });
+  });
+
   it("adds auth headers and run id to mutating requests", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       mockJsonResponse({ ok: true }),
@@ -123,6 +133,7 @@ describe("paperclip MCP tools", () => {
     expect(init.method).toBe("POST");
     expect(JSON.parse(String(init.body))).toEqual({
       title: "Assigned follow-up",
+      allowDuplicate: false,
       workMode: "standard",
       priority: "medium",
       assigneeAgentId: "22222222-2222-2222-2222-222222222222",

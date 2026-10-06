@@ -15,6 +15,15 @@ Current implementation status:
 - Node.js 24.11+
 - pnpm 9+
 
+The task Browser tab uses Playwright Chromium. Install its browser binary under
+the same Unix account that runs Paperclip:
+
+```sh
+pnpm --filter @paperclipai/server exec playwright install chromium
+```
+
+The task Terminal tab also requires `python3` and `/bin/bash` on the server.
+
 ## Dependency Lockfile Policy
 
 GitHub Actions owns `pnpm-lock.yaml`.

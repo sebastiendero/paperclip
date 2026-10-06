@@ -687,5 +687,41 @@ export function createToolDefinitions(client: PaperclipApiClient): ToolDefinitio
         });
       },
     ),
+    makeTool(
+      "paperclipBrowserState",
+      "Read the shared browser for a task: current URL, page title, visible text, and whether the operator has taken control. Use this browser so the operator can follow your work live.",
+      z.object({ issueId: issueIdSchema }),
+      async ({ issueId }) => client.requestJson("GET", `/issues/${encodeURIComponent(issueId)}/browser/state`, { includeRunId: true }),
+    ),
+    makeTool(
+      "paperclipBrowserNavigate",
+      "Navigate the task's shared browser to an HTTP or HTTPS URL. The operator sees the same page; actions pause while they control it.",
+      z.object({ issueId: issueIdSchema, url: z.url().max(2048) }),
+      async ({ issueId, url }) => client.requestJson("POST", `/issues/${encodeURIComponent(issueId)}/browser/action`, { body: { type: "navigate", url } }),
+    ),
+    makeTool(
+      "paperclipBrowserClick",
+      "Click a CSS selector in the task's shared browser. Call paperclipBrowserState to inspect the resulting page.",
+      z.object({ issueId: issueIdSchema, selector: z.string().min(1).max(500) }),
+      async ({ issueId, selector }) => client.requestJson("POST", `/issues/${encodeURIComponent(issueId)}/browser/action`, { body: { type: "clickSelector", selector } }),
+    ),
+    makeTool(
+      "paperclipBrowserType",
+      "Fill a CSS-selected field in the task's shared browser, or type into its currently focused field.",
+      z.object({ issueId: issueIdSchema, text: z.string().max(5000), selector: z.string().min(1).max(500).optional() }),
+      async ({ issueId, text, selector }) => client.requestJson("POST", `/issues/${encodeURIComponent(issueId)}/browser/action`, { body: { type: "type", text, selector } }),
+    ),
+    makeTool(
+      "paperclipBrowserKey",
+      "Press a key, such as Enter or Tab, in the task's shared browser.",
+      z.object({ issueId: issueIdSchema, key: z.string().min(1).max(80) }),
+      async ({ issueId, key }) => client.requestJson("POST", `/issues/${encodeURIComponent(issueId)}/browser/action`, { body: { type: "key", key } }),
+    ),
+    makeTool(
+      "paperclipBrowserScroll",
+      "Scroll the task's shared browser by horizontal and vertical pixel offsets.",
+      z.object({ issueId: issueIdSchema, x: z.number().int().min(-2000).max(2000).default(0), y: z.number().int().min(-2000).max(2000) }),
+      async ({ issueId, x, y }) => client.requestJson("POST", `/issues/${encodeURIComponent(issueId)}/browser/action`, { body: { type: "scroll", x, y } }),
+    ),
   ];
 }

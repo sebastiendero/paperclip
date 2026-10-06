@@ -348,6 +348,14 @@ describe("TaskSidePanel", () => {
     expect(container.querySelector('[data-side-panel-tab-target="subtasks"]')).not.toBeNull();
   });
 
+  it("offers Terminal and Browser for each task", async () => {
+    await render(panel());
+    await act(async () => container.querySelector<HTMLButtonElement>('button[aria-label="Open a new tab"]')?.click());
+    const options = Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]')).map((item) => item.textContent ?? "");
+    expect(options.some((label) => label.includes("Terminal"))).toBe(true);
+    expect(options.some((label) => label.includes("Browser"))).toBe(true);
+  });
+
   it("does not create a Plan tab for planning mode before a plan exists", async () => {
     await render(panel({ issue: issue({ workMode: "planning" }) }));
     expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain("Properties");

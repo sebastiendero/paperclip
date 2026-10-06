@@ -1772,3 +1772,19 @@ omit the already-rejected export, clear stale repair notices, and finalize the
 accepted result without another provider turn, even when its old sandbox is
 unavailable. Preserve current ownership and newer-work fences. See
 `native-workspace-finalization-recovery.md`.
+
+### Task terminal and shared browser (2026-10-06)
+
+The task side panel offers Terminal and Browser tabs. Terminal opens one
+interactive PTY per task only when that task has an active local filesystem
+execution workspace. Board access is required. Its short-lived, single-use
+WebSocket ticket never enters a URL; the shell stops after 15 minutes without a
+viewer or when the server stops.
+
+Browser opens one isolated Chromium context per task. Board and the task's
+active agent run see the same page, URL, and text. Agents navigate and interact
+through the task browser MCP tools. The board can take control for five minutes
+and renew it by interacting; agent browser actions return a conflict during
+that lease. Release lets agents resume. Sessions close after 15 minutes idle,
+when the board closes one, or when the server stops. Browsing actions are
+audited without recording page text, screenshots, or cookies.

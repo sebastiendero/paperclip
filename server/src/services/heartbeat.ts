@@ -8677,6 +8677,13 @@ export function buildPaperclipTaskMarkdown(input: {
           ]),
     );
   }
+  if (issue) {
+    lines.push(
+      "",
+      "Shared task browser:",
+      "When browser work should be visible to the operator, use the task browser tools (browser_navigate, browser_observe, browser_screenshot, browser_click, browser_type, browser_key, browser_scroll) if they are available. They operate on the Browser tab of this task. If an action reports that the operator has taken control, wait for release before continuing browser actions.",
+    );
+  }
   if (input.externalChatProvider && input.nativeRunner) {
     lines.push(
       "",

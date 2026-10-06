@@ -33,6 +33,8 @@ export type TaskSidePanelTabPayload =
   | { kind: "properties" }
   | { kind: "subtasks" }
   | { kind: "artifacts" }
+  | { kind: "terminal" }
+  | { kind: "browser" }
   | { kind: "skill"; skillId: string }
   | { kind: "issue-document"; documentKey: string }
   | {
@@ -91,6 +93,7 @@ function parsePayload(value: unknown): TaskSidePanelTabPayload | null {
   if (kind === "properties") return { kind };
   if (kind === "subtasks") return { kind };
   if (kind === "artifacts") return { kind };
+  if (kind === "terminal" || kind === "browser") return { kind };
   if (kind === "skill") {
     return typeof input.skillId === "string" && input.skillId.length > 0 ? { kind, skillId: input.skillId } : null;
   }
@@ -221,6 +224,14 @@ export function taskPanelSubtasksTab(): SidePanelTabRecord<TaskSidePanelTabPaylo
 
 export function taskPanelArtifactsTab(): SidePanelTabRecord<TaskSidePanelTabPayload> {
   return { id: "artifacts", type: "artifacts", label: "Artifacts", closable: true, contentMode: "padded", payload: { kind: "artifacts" } };
+}
+
+export function taskPanelTerminalTab(): SidePanelTabRecord<TaskSidePanelTabPayload> {
+  return { id: "terminal", type: "terminal", label: "Terminal", closable: true, contentMode: "full-bleed", payload: { kind: "terminal" } };
+}
+
+export function taskPanelBrowserTab(): SidePanelTabRecord<TaskSidePanelTabPayload> {
+  return { id: "browser", type: "browser", label: "Browser", closable: true, contentMode: "full-bleed", payload: { kind: "browser" } };
 }
 
 export function taskPanelSkillTab(skillId: string, label = "Skill"): SidePanelTabRecord<TaskSidePanelTabPayload> {

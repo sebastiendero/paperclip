@@ -21,6 +21,8 @@ import {
   Lightbulb,
   ListTree,
   Plus,
+  TerminalSquare,
+  Globe2,
   SlidersHorizontal,
 } from "lucide-react";
 import { fileResourcesApi } from "@/api/file-resources";
@@ -62,11 +64,13 @@ import { useLocation, useNavigate } from "@/lib/router";
 import {
   readTaskSidePanelState,
   taskPanelArtifactsTab,
+  taskPanelBrowserTab,
   taskPanelDocumentTab,
   taskPanelFilesTab,
   taskPanelPropertiesTab,
   taskPanelSkillTab,
   taskPanelSubtasksTab,
+  taskPanelTerminalTab,
   taskPanelWorkspaceFileTab,
   writeTaskSidePanelState,
   type TaskSidePanelTabPayload,
@@ -75,6 +79,8 @@ import { cn } from "@/lib/utils";
 import { TaskDocumentPanel } from "./TaskDocumentPanel";
 import { TaskWorkspaceFilePanel } from "./TaskWorkspaceFilePanel";
 import { TaskSkillPanel } from "./TaskSkillPanel";
+import { TaskBrowserPanel } from "./TaskBrowserPanel";
+import { TaskTerminalPanel } from "./TaskTerminalPanel";
 
 export interface TaskSidePanelProps {
   issue: Issue;
@@ -113,6 +119,8 @@ function tabIcon(tab: SidePanelTabRecord<TaskSidePanelTabPayload>): ReactNode {
     case "properties": return <SlidersHorizontal />;
     case "subtasks": return <ListTree />;
     case "artifacts": return <Box />;
+    case "terminal": return <TerminalSquare />;
+    case "browser": return <Globe2 />;
     case "files-browser": return <FolderOpen />;
     case "workspace-file": return <FileCode2 />;
     case "issue-document": return tab.payload.documentKey === "plan" ? <Lightbulb /> : <FileText />;
@@ -503,6 +511,8 @@ export function TaskSidePanel({
       { id: "properties", label: "Properties", icon: <SlidersHorizontal />, alreadyOpen: controller.tabs.some((tab) => tab.id === "properties") },
       ...(subtasksAvailable ? [{ id: "subtasks", label: taskLabel, description: tasksTab?.hasError ? "Could not load all tasks" : `${taskCount} total`, icon: <ListTree />, alreadyOpen: controller.tabs.some((tab) => tab.id === "subtasks") }] : []),
       { id: "artifacts", label: "Artifacts", icon: <Box />, alreadyOpen: controller.tabs.some((tab) => tab.id === "artifacts") },
+      { id: "terminal", label: "Terminal", icon: <TerminalSquare />, alreadyOpen: controller.tabs.some((tab) => tab.id === "terminal") },
+      { id: "browser", label: "Browser", icon: <Globe2 />, alreadyOpen: controller.tabs.some((tab) => tab.id === "browser") },
     ];
     if (fileTabsEnabled) {
       primary.push({ id: "files", label: "Files", icon: <FolderOpen />, shortcut: "G F", alreadyOpen: controller.tabs.some((tab) => tab.id === "files") });
@@ -564,6 +574,8 @@ export function TaskSidePanel({
       });
     }
     else if (item.id === "artifacts") controller.openTab(taskPanelArtifactsTab());
+    else if (item.id === "terminal") controller.openTab(taskPanelTerminalTab());
+    else if (item.id === "browser") controller.openTab(taskPanelBrowserTab());
     else if (item.id === "files") {
       controller.openTab(taskPanelFilesTab());
       viewer.openBrowse();
@@ -657,6 +669,10 @@ export function TaskSidePanel({
     );
   } else if (activeTab.payload.kind === "artifacts") {
     content = <IssuePropertiesArtifactsTab issue={issue} onOpenDocument={openDocument} />;
+  } else if (activeTab.payload.kind === "terminal") {
+    content = <TaskTerminalPanel issueId={issue.id} />;
+  } else if (activeTab.payload.kind === "browser") {
+    content = <TaskBrowserPanel issueId={issue.id} runtimeServices={issue.currentExecutionWorkspace?.runtimeServices} />;
   } else if (activeTab.payload.kind === "issue-document") {
     content = activeTab.payload.documentKey === "plan" ? (
       <IssuePropertiesPlansTab issue={issue} inline={inline} />

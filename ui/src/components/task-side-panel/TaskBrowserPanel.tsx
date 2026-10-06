@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { operatorToolsApi, taskToolsApi, type TaskBrowserAction, type TaskBrowserState } from "@/api/task-tools";
 import { cn } from "@/lib/utils";
+import { resolveBrowserAddress } from "@/lib/browser-address";
 import type { WorkspaceRuntimeService } from "@paperclipai/shared";
 
 export function TaskBrowserPanel({ issueId, companyId, runtimeServices = [] }: { issueId?: string; companyId?: string; runtimeServices?: WorkspaceRuntimeService[] }) {
@@ -66,7 +67,7 @@ export function TaskBrowserPanel({ issueId, companyId, runtimeServices = [] }: {
       setError(null);
       try {
         if (!controlled) await toolsApi.browserControl(targetId, "take");
-        await toolsApi.browserAction(targetId, { type: "navigate", url: /^https?:\/\//i.test(url) ? url : `https://${url}` });
+        await toolsApi.browserAction(targetId, { type: "navigate", url: resolveBrowserAddress(url) });
         await refresh();
       } catch (cause) {
         setError(cause instanceof Error ? cause.message : "Could not open this address.");
@@ -89,7 +90,7 @@ export function TaskBrowserPanel({ issueId, companyId, runtimeServices = [] }: {
     <div className="space-y-2 border-b border-border p-3">
       <div className="flex items-center gap-2">
         <form onSubmit={submitUrl} className="flex min-w-0 flex-1 items-center gap-1">
-          <Input data-task-browser-url="true" aria-label="Browser address" value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://example.com" className="min-w-0 flex-1 font-mono text-xs" />
+          <Input data-task-browser-url="true" aria-label="Search or enter a browser address" value={url} onChange={(event) => setUrl(event.target.value)} placeholder="Search or enter an address" className="min-w-0 flex-1 font-mono text-xs" />
           <Button type="submit" size="icon-sm" variant="outline" aria-label="Open address" disabled={busy || !url.trim()}><ArrowRight aria-hidden /></Button>
         </form>
         <Button type="button" size="icon-sm" variant="ghost" aria-label="Refresh browser view" onClick={() => void refresh()}><RefreshCw aria-hidden /></Button>
@@ -110,7 +111,7 @@ export function TaskBrowserPanel({ issueId, companyId, runtimeServices = [] }: {
       {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
     </div>
     <div className="min-h-0 flex-1 overflow-auto bg-muted/20 p-2">
-      {state?.url === "about:blank" ? <div className="flex h-full min-h-64 flex-col items-center justify-center gap-2 text-center"><p className="text-sm font-medium">Open a website</p><p className="max-w-sm text-xs text-muted-foreground">Enter its address above and press Enter. Browser control starts automatically.</p></div> : image ? <img src={image} alt={state?.title ? `Current browser page: ${state.title}` : "Current browser page"} onClick={clickImage} onWheel={scrollImage} className="mx-auto block w-full max-w-7xl border border-border bg-card" /> : <p className="p-3 text-sm text-muted-foreground">Opening browser…</p>}
+      {state?.url === "about:blank" ? <div className="flex h-full min-h-64 flex-col items-center justify-center gap-2 text-center"><p className="text-sm font-medium">Open a website</p><p className="max-w-sm text-xs text-muted-foreground">Enter a web address or search for something above, then press Enter. Browser control starts automatically.</p></div> : image ? <img src={image} alt={state?.title ? `Current browser page: ${state.title}` : "Current browser page"} onClick={clickImage} onWheel={scrollImage} className="mx-auto block w-full max-w-7xl border border-border bg-card" /> : <p className="p-3 text-sm text-muted-foreground">Opening browser…</p>}
     </div>
     <form onSubmit={(event) => { event.preventDefault(); if (controlled && text) { void act({ type: "type", text }); setText(""); } }} className="flex gap-2 border-t border-border p-2">
       <Input aria-label="Type into focused browser field" value={text} onChange={(event) => setText(event.target.value)} placeholder="Type into the selected field" disabled={!controlled} className="min-w-0 flex-1" />

@@ -23,4 +23,16 @@ describe("privateJsonEtag", () => {
     expect(changed.status).toBe(200);
     expect(changed.headers.etag).not.toBe(first.headers.etag);
   });
+
+  it("preserves explicit no-store for sensitive browser JSON", async () => {
+    const app = express();
+    app.get("/browser/screenshot", privateJsonEtag(), (_req, res) => {
+      res.setHeader("Cache-Control", "no-store");
+      res.json({ data: "sensitive-image" });
+    });
+    const response = await request(app).get("/browser/screenshot");
+    expect(response.status).toBe(200);
+    expect(response.headers["cache-control"]).toBe("no-store");
+    expect(response.headers.etag).toBeUndefined();
+  });
 });

@@ -26,6 +26,14 @@ export function privateJsonEtag(): RequestHandler {
         || !contentType.includes("application/json")
       ) return originalSend(body);
       const serialized = typeof body === "string" ? body : JSON.stringify(body);
+      const cacheControl = res.getHeader("Cache-Control");
+      if (typeof cacheControl === "string" && /(?:^|,)\s*no-store\s*(?:,|$)/i.test(cacheControl)) {
+        // Browser screenshots and other sensitive JSON must never receive the
+        // middleware's revalidation policy or an Express-generated ETag.
+        res.removeHeader("ETag");
+        res.end(serialized);
+        return res;
+      }
       const etag = `"${createHash("sha256").update(serialized).digest("base64url")}"`;
       res.setHeader("Cache-Control", "private, must-revalidate");
       res.setHeader("ETag", etag);

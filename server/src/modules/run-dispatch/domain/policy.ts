@@ -1,3 +1,4 @@
+import { allowsParkedIssueWake } from "../../../lib/issue-wake-policy.js";
 // Pure decision rules for two heartbeat run-dispatch gates:
 //   - the scheduled-retry promotion gate (decideScheduledRetryGate)
 //   - the queued-run staleness check (decideQueuedRunStaleness)
@@ -129,6 +130,7 @@ export type StalenessDecision =
     };
 
 export type QueuedRunFacts = {
+  wakeRequestedByActorType?: string | null;
   /** Rechecked for automatic native replacements immediately before dispatch. */
   dependenciesBlocked?: DependencyBlockFacts | null;
   runId: string;
@@ -605,6 +607,15 @@ export function decideQueuedRunStaleness(
     return { stale: true, errorCode: "issue_execution_lock_changed",
       reason: "Cancelled because another run owns task execution or checkout before replacement dispatch",
       details: { issueId: facts.issueId, currentExecutionRunId: facts.issueExecutionRunId, currentCheckoutRunId: facts.issueCheckoutRunId ?? null } };
+  }
+
+  if (!allowsParkedIssueWake({
+    issueStatus: facts.issueStatus, wakeReason: facts.wakeReason,
+    requestedByActorType: facts.wakeRequestedByActorType,
+  })) {
+    return { stale: true, errorCode: "issue_not_in_progress",
+      reason: "Cancelled because the task is parked and no new event authorizes execution",
+      details: { issueId: facts.issueId, currentStatus: facts.issueStatus } };
   }
 
   const requiresInProgress = facts.retryReasonKind === "max_turn_continuation";

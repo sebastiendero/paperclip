@@ -14,6 +14,28 @@ describe("shouldAutoCheckoutIssueForWake", () => {
     })).toBe(true);
   });
 
+  it.each(["backlog", "blocked"])("keeps %s parked without a real event", (issueStatus) => {
+    for (const wakeReason of ["issue_continuation_needed", "heartbeat_timer", "issue_commented"]) {
+      expect(shouldAutoCheckoutIssueForWake({
+        contextSnapshot: { wakeReason }, issueStatus,
+        issueAssigneeAgentId: "agent-1", isDependencyReady: true, agentId: "agent-1",
+      })).toBe(false);
+    }
+  });
+
+  it.each(["backlog", "blocked"])("allows real events to resume %s", (issueStatus) => {
+    for (const contextSnapshot of [
+      { wakeReason: "issue_assigned" },
+      { wakeReason: "issue_blockers_resolved" },
+      { wakeReason: "issue_commented", wakeRequestedByActorType: "user" },
+    ]) {
+      expect(shouldAutoCheckoutIssueForWake({
+        contextSnapshot, issueStatus,
+        issueAssigneeAgentId: "agent-1", isDependencyReady: true, agentId: "agent-1",
+      })).toBe(true);
+    }
+  });
+
   it("leaves an idle review issue in review without an actionable wake", () => {
     expect(shouldAutoCheckoutIssueForWake({
       contextSnapshot: {},

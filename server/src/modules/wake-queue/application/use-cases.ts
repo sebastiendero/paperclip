@@ -1,3 +1,4 @@
+import { allowsParkedIssueWake } from "../../../lib/issue-wake-policy.js";
 import { enrichPromotedWakeContext } from "../domain/context.js";
 import {
   decideQueuedCommentAction,
@@ -328,6 +329,17 @@ async function promoteDeferredWake(
   input: ReleaseIssueExecutionInput,
 ): Promise<ReleaseTransactionResult | null> {
   let currentIssue = issue;
+  if (!allowsParkedIssueWake({
+    issueStatus: currentIssue.status,
+    wakeReason: workingCandidate.wakeReason ?? workingCandidate.reason,
+    requestedByActorType: workingCandidate.requestedByActorType,
+  })) {
+    await ports.transaction.cancelDeferredWake({
+      companyId: run.companyId, wakeId: workingCandidate.id,
+      reason: "Parked task requires a new event before deferred execution", now: input.now,
+    });
+    return null;
+  }
   let shouldReopen = false;
   if (
     !workingCandidate.authorizedFailedChatRetry &&
@@ -411,7 +423,10 @@ async function promoteDeferredWake(
   delete promotedPayload["_paperclipWakeContext"];
   delete promotedPayload["queuedCommentInterrupt"];
 
-  const promotedContextSeed: Record<string, unknown> = { ...workingCandidate.deferredContextSeed };
+  const promotedContextSeed: Record<string, unknown> = {
+    ...workingCandidate.deferredContextSeed,
+    wakeRequestedByActorType: workingCandidate.requestedByActorType,
+  };
   if (pauseHold.activePauseHold) {
     promotedContextSeed.treeHoldInteraction = true;
     promotedContextSeed.activeTreeHold = {

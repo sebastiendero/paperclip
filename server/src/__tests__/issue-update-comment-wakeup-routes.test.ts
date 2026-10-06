@@ -7,6 +7,8 @@ const PREVIOUS_AGENT_ID = "22222222-2222-4222-8222-222222222222";
 const MENTIONED_AGENT_ID = "33333333-3333-4333-8333-333333333333";
 const SOURCE_RUN_ID = "44444444-4444-4444-8444-444444444444";
 
+const mockAgentGetById = vi.hoisted(() => vi.fn());
+
 const mockIssueService = vi.hoisted(() => ({
   getById: vi.fn(),
   getByIdentifier: vi.fn(),
@@ -69,7 +71,7 @@ vi.mock("../services/index.js", () => ({
     hasPermission: vi.fn(async () => true),
   }),
   agentService: () => ({
-    getById: vi.fn(async () => null),
+    getById: mockAgentGetById,
     resolveByReference: vi.fn(async (_companyId: string, raw: string) => ({
       ambiguous: false,
       agent: { id: raw },
@@ -130,6 +132,14 @@ vi.mock("../services/index.js", () => ({
 }));
 
 function registerModuleMocks() {
+  vi.doMock("../services/task-watchdog-scope.js", async (importOriginal) => ({
+    ...await importOriginal<typeof import("../services/task-watchdog-scope.js")>(),
+    resolveTaskWatchdogMutationScope: vi.fn(async () => ({ kind: "none" })),
+  }));
+  vi.doMock("../services/cross-issue-influence-limit.js", async (importOriginal) => ({
+    ...await importOriginal<typeof import("../services/cross-issue-influence-limit.js")>(),
+    observeCrossIssueInfluence: vi.fn(async () => ({ allowed: true })),
+  }));
   vi.doMock("../services/index.js", () => ({
     companyService: () => ({
       getById: vi.fn(async () => ({ id: "company-1" })),
@@ -140,7 +150,7 @@ function registerModuleMocks() {
       hasPermission: vi.fn(async () => true),
     }),
     agentService: () => ({
-      getById: vi.fn(async () => null),
+      getById: mockAgentGetById,
       resolveByReference: vi.fn(async (_companyId: string, raw: string) => ({
         ambiguous: false,
         agent: { id: raw },
@@ -210,7 +220,9 @@ async function createApp(transaction: (callback: (tx: Record<string, never>) => 
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
-    (req as any).actor = {
+    (req as any).actor = req.header("x-test-agent-id") ? {
+      type: "agent", agentId: req.header("x-test-agent-id"), companyId: "company-1", runId: SOURCE_RUN_ID,
+    } : {
       type: "board",
       userId: "local-board",
       companyIds: ["company-1"],
@@ -221,6 +233,7 @@ async function createApp(transaction: (callback: (tx: Record<string, never>) => 
     next();
   });
   app.use("/api", issueRoutes({
+    select: () => ({ from: () => ({ where: async () => [] }) }),
     transaction,
   } as any, {} as any));
   app.use(errorHandler);
@@ -256,6 +269,7 @@ describe("issue update comment wakeups", () => {
     vi.doUnmock("../middleware/index.js");
     registerModuleMocks();
     vi.clearAllMocks();
+    mockAgentGetById.mockResolvedValue(null);
     mockAccessDecide.mockImplementation(async (input) => ({ allowed: true, action: input.action, reason: "allow_explicit_grant", explanation: "Allowed by test grant." }));
     mockPauseGate.mockResolvedValue(null);
     mockIssueService.findMentionedAgents.mockResolvedValue([]);
@@ -267,6 +281,29 @@ describe("issue update comment wakeups", () => {
     mockIssueService.getWakeableParentAfterChildCompletion.mockResolvedValue(null);
     mockIssueService.getCurrentScheduledRetry.mockResolvedValue(null);
     mockIssueService.listReviewAttention.mockResolvedValue(new Map());
+  });
+
+  it.each((["post", "patch"] as const).flatMap((method) =>
+    ["backlog", "blocked"].flatMap((status) => ["user", "agent"].map((actor) => ({ method, status, actor }))),
+  ))("gates $actor comments on $status through $method", async ({ method, status, actor }) => {
+    const existing = makeIssue({ status, assigneeAgentId: ASSIGNEE_AGENT_ID, assigneeUserId: null });
+    if (actor === "agent") mockAgentGetById.mockResolvedValue({
+      id: PREVIOUS_AGENT_ID, companyId: "company-1", role: "engineer", status: "idle", permissions: {},
+    });
+    mockIssueService.getById.mockResolvedValue(existing);
+    mockIssueService.update.mockResolvedValue(existing);
+    mockIssueService.addComment.mockResolvedValue({
+      id: "synthetic-comment", issueId: existing.id, companyId: existing.companyId,
+      body: "Synthetic follow-up", createdByRunId: null,
+    });
+    const app = await createApp();
+    const req = method === "post" ? request(app).post(`/api/issues/${existing.id}/comments`)
+      : request(app).patch(`/api/issues/${existing.id}`);
+    if (actor === "agent") req.set("x-test-agent-id", PREVIOUS_AGENT_ID);
+    const res = await req.send(method === "post" ? { body: "Synthetic follow-up" } : { comment: "Synthetic follow-up" });
+    expect(res.status, JSON.stringify(res.body)).toBe(method === "post" ? 201 : 200);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(mockHeartbeatService.wakeup).toHaveBeenCalledTimes(actor === "user" ? 1 : 0);
   });
 
   it.each(["post", "patch"] as const)("rejects %s board messages under an inherited pause before any mutation", async (method) => {

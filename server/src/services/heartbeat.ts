@@ -1,3 +1,4 @@
+import { allowsParkedIssueWake } from "../lib/issue-wake-policy.js";
 import { CHAT_COMPLETION_WAKE_REASON, prepareChatCompletionTurn, chatCompletionInstruction, isCompletedOnboardingHandoffWake } from "./chat-completion-delivery.js";
 import { isAgentDirectoryCopy } from "./agent-directory-working-copies.js";
 
@@ -6971,6 +6972,10 @@ export function shouldAutoCheckoutIssueForWake(input: {
   }
 
   const wakeReason = readNonEmptyString(input.contextSnapshot?.wakeReason);
+  if (!allowsParkedIssueWake({
+    issueStatus, wakeReason,
+    requestedByActorType: readNonEmptyString(input.contextSnapshot?.wakeRequestedByActorType),
+  })) return false;
   if (!wakeReason) return false;
   if (wakeReason === "issue_comment_mentioned") return false;
   if (wakeReason === "source_scoped_recovery_action") return false;
@@ -20408,6 +20413,17 @@ export function heartbeatService(
         }
         issueContext = await getIssueExecutionContext(agent.companyId, issueId);
       }
+      if (issueContext && ["blocked", "backlog"].includes(issueContext.status ?? "")) {
+        // Old queued runs predate the actor marker. Their receipt remains the
+        // authority for a board comment, including after deferred promotion.
+        const wakeActor = run.wakeupRequestId
+          ? await db.select({ actorType: agentWakeupRequests.requestedByActorType })
+              .from(agentWakeupRequests)
+              .where(and(eq(agentWakeupRequests.id, run.wakeupRequestId), eq(agentWakeupRequests.companyId, run.companyId)))
+              .then((rows) => rows[0] ?? null)
+          : null;
+        context.wakeRequestedByActorType = wakeActor?.actorType ?? null;
+      }
       if (
         issueId &&
         issueContext &&
@@ -26513,6 +26529,8 @@ export function heartbeatService(
       triggerDetail,
       payload,
     });
+    // Capture the authenticated caller, never a marker supplied in context.
+    enrichedContextSnapshot.wakeRequestedByActorType = opts.requestedByActorType ?? null;
     let issueId =
       readNonEmptyString(enrichedContextSnapshot.issueId) ?? issueIdFromPayload;
     if (executionReconciliationWake && !issueId) return null;
@@ -27858,6 +27876,24 @@ export function heartbeatService(
                 requestedByActorId: opts.requestedByActorId ?? null,
                 idempotencyKey: opts.idempotencyKey ?? null,
                 finishedAt: new Date(),
+              },
+            });
+            return { kind: "skipped" as const };
+          }
+
+          if (!allowsParkedIssueWake({
+            issueStatus: issue.status, wakeReason: reason ?? readNonEmptyString(enrichedContextSnapshot.wakeReason),
+            requestedByActorType: opts.requestedByActorType,
+          })) {
+            await recordExecutionWait(tx as unknown as Db, {
+              issueId: issue.id, coalesce: coalesceExecutionWait,
+              condition: { status: issue.status },
+              request: {
+                ...durableReceiptFields, companyId: agent.companyId, agentId, source, triggerDetail,
+                reason: "issue_parked_without_event", payload, status: "skipped",
+                requestedByActorType: opts.requestedByActorType ?? null,
+                requestedByActorId: opts.requestedByActorId ?? null,
+                idempotencyKey: opts.idempotencyKey ?? null, finishedAt: new Date(),
               },
             });
             return { kind: "skipped" as const };

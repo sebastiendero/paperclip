@@ -527,6 +527,17 @@ export function createPostgresRunDispatchAdapter(
       (rows) => rows[0] ?? null,
     );
 
+    // Read the durable actor for legacy queued runs as well as new admissions.
+    const wakeActor = issue && ["blocked", "backlog"].includes(issue.status)
+      ? await dbOrTx.select({ actorType: agentWakeupRequests.requestedByActorType })
+          .from(heartbeatRuns)
+          .innerJoin(agentWakeupRequests, and(
+            eq(agentWakeupRequests.id, heartbeatRuns.wakeupRequestId),
+            eq(agentWakeupRequests.companyId, input.companyId),
+          ))
+          .where(and(eq(heartbeatRuns.id, input.runId), eq(heartbeatRuns.companyId, input.companyId)))
+          .then((rows) => rows[0] ?? null)
+      : null;
     const wakeCommentId = deriveCommentId(context);
     const isInteractionWake = allowsIssueInteractionWake(
       context,
@@ -609,6 +620,7 @@ export function createPostgresRunDispatchAdapter(
       isNonAssigneeWorkspaceBusyRetry: isNonAssigneeWorkspaceBusyRetry(retryReason, context),
       resumeIntent,
       wakeCommentIdPresent: Boolean(wakeCommentId),
+      wakeRequestedByActorType: wakeActor?.actorType ?? null,
       isCompletedOnboardingHandoffWake: await isCompletedOnboardingHandoffWake(dbOrTx, {
         companyId: input.companyId, issueId, agentId: input.agentId,
         reason: wakeReason, contextSnapshot: context,

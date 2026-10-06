@@ -10728,8 +10728,29 @@ export function issueService(db: Db) {
         updatedAt: new Date(),
       };
       if (existing.status !== "blocked" && issueData.status === "blocked") {
-        patch.blockedTransitionAt = patch.updatedAt;
-        patch.blockedOwnerNotifiedAt = null;
+        // Checkout temporarily moves a blocked task to in_progress. Its assignee
+        // reasserting the same wait must not mint a fresh dependency-wake key.
+        const assigneeReblock = existing.status === "in_progress"
+          && actorAgentId === existing.assigneeAgentId
+          && (issueData.assigneeAgentId === undefined || issueData.assigneeAgentId === existing.assigneeAgentId);
+        // Only a dependency checkout continues the old cycle (including legacy
+        // rows without a stamp). An ordinary checkout starts a new cycle.
+        const dependencyCheckout = assigneeReblock && existing.checkoutRunId
+          ? await dbOrTx.select({ id: heartbeatRuns.id }).from(heartbeatRuns)
+              .innerJoin(agentWakeupRequests, and(
+                eq(agentWakeupRequests.id, heartbeatRuns.wakeupRequestId),
+                eq(agentWakeupRequests.companyId, existing.companyId),
+                eq(agentWakeupRequests.reason, "issue_blockers_resolved"),
+              ))
+              .where(and(eq(heartbeatRuns.id, existing.checkoutRunId),
+                eq(heartbeatRuns.companyId, existing.companyId), eq(heartbeatRuns.agentId, actorAgentId!)))
+              .then((rows: Array<{ id: string }>) => rows.length > 0)
+          : false;
+        const continuesBlockedCycle = assigneeReblock && dependencyCheckout;
+        if (!continuesBlockedCycle) {
+          patch.blockedTransitionAt = patch.updatedAt;
+          patch.blockedOwnerNotifiedAt = null;
+        }
       } else if (
         existing.status === "blocked" &&
         issueData.status &&

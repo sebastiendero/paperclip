@@ -146,6 +146,27 @@ function createFakeRecovery(): RecoveryEscalationPort {
 }
 
 describe("releaseIssueExecution", () => {
+  it.each(["blocked", "backlog"].flatMap((status) =>
+    (["user", "agent", "system"] as const).map((actor) => ({ status, actor })),
+  ))("only promotes a real event for $status from $actor", async ({ status, actor }) => {
+    const issue = { ...ISSUE, status, assigneeAgentId: AGENT.id };
+    const queue = [wakeCandidate({ requestedByActorType: actor })];
+    const transaction = createFakeTransaction({ findNextDeferredWake: vi.fn(async () => queue.shift() ?? null) });
+    const release = createReleaseIssueExecution({
+      issueLock: createFakeIssueLock(createFakeHost(), transaction, issue), recovery: createFakeRecovery(),
+    });
+    const result = await release({ companyId: RUN.companyId, runId: RUN.id, now: new Date() });
+    expect(result.outcome.kind).toBe(actor === "user" ? "promoted" : "released");
+    expect(transaction.finalizePromotedWake).toHaveBeenCalledTimes(actor === "user" ? 1 : 0);
+    if (actor === "user") {
+      expect(transaction.finalizePromotedWake).toHaveBeenCalledWith(expect.objectContaining({
+        contextSnapshot: expect.objectContaining({ wakeRequestedByActorType: "user" }),
+      }));
+    } else {
+      expect(transaction.cancelDeferredWake).toHaveBeenCalledTimes(1);
+    }
+  });
+
   it.each(["closing", "mixed_comments", "explicit_resume", "interaction", "other_source_task", "parent_open"])(
     "checks late completed-delegation mentions without dropping independent input (%s)", async (scenario) => {
       const originalCommentIds = ["closing-comment", "second-comment"];

@@ -1,5 +1,8 @@
+import { allowsParkedIssueWake } from "../lib/issue-wake-policy.js";
+
 export function shouldWakeAssigneeForIssueComment(input: {
   selfComment: boolean;
+  requestedByActorType?: "user" | "agent" | "system";
   resumeRequested: boolean;
   commentCreatedByRunId?: string | null;
   issueAtCommentStart: {
@@ -9,6 +12,10 @@ export function shouldWakeAssigneeForIssueComment(input: {
   reopened: boolean;
   currentStatus: string | null | undefined;
 }) {
+  if (!allowsParkedIssueWake({
+    issueStatus: input.currentStatus, wakeReason: "issue_commented",
+    requestedByActorType: input.requestedByActorType,
+  })) return false;
   const sourceRunId = input.commentCreatedByRunId;
   const commentIsFromCurrentIssueRun = Boolean(
     sourceRunId &&

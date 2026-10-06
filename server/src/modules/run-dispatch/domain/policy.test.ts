@@ -267,6 +267,21 @@ describe("decideScheduledRetryGate", () => {
 });
 
 describe("decideQueuedRunStaleness", () => {
+  it.each(["blocked", "backlog"])("keeps real events dispatchable for %s", (issueStatus) => {
+    for (const event of [
+      { wakeReason: "issue_assigned" }, { wakeReason: "issue_blockers_resolved" },
+      { wakeReason: "issue_commented", wakeRequestedByActorType: "user" },
+    ]) {
+      expect(decideQueuedRunStaleness({ ...baseStalenessFacts(), issueStatus, ...event }, NOW)).toEqual({ stale: false });
+    }
+  });
+
+  it.each(["blocked", "backlog"])("rejects automatic queued work for %s", (issueStatus) => {
+    expect(decideQueuedRunStaleness({
+      ...baseStalenessFacts(), issueStatus, wakeReason: "issue_continuation_needed",
+    }, NOW)).toMatchObject({ stale: true });
+  });
+
   it("is not stale when every rule passes", () => {
     expect(decideQueuedRunStaleness(baseStalenessFacts(), NOW)).toEqual({
       stale: false,

@@ -339,7 +339,7 @@ describeEmbeddedPostgres("heartbeat resolved dependency wake reconciliation", ()
       });
     }
 
-    return { companyId, agentId, blockedIssueId, blockerIssueId, executionWorkspaceId };
+    return { companyId, agentId, ownerUserId, blockedIssueId, blockerIssueId, executionWorkspaceId };
   }
 
   it("runs exactly one bounded review-path recovery before surfacing a stalled decision", async () => {
@@ -546,6 +546,104 @@ describeEmbeddedPostgres("heartbeat resolved dependency wake reconciliation", ()
         blockerIssueIds: [blockerIssueId],
       }),
     });
+  });
+
+  it.each(["stamped", "legacy"])("does not wake again after dependency checkout and assignee reblocking (%s)", async (cycleKind) => {
+    const { companyId, agentId, blockedIssueId } =
+      await seedResolvedDependencyBackstopFixture({ workspaceState: "none" });
+    const cycle = cycleKind === "legacy" ? null : new Date("2026-08-01T12:00:00.000Z");
+    await db.update(issues).set({ blockedTransitionAt: cycle }).where(eq(issues.id, blockedIssueId));
+    const heartbeat = heartbeatService(db);
+    const statusesAtExecution: string[] = [];
+    mockAdapterExecute.mockImplementation(async () => {
+      const issue = await issueService(db).getById(blockedIssueId);
+      statusesAtExecution.push(issue!.status);
+      await issueService(db).update(blockedIssueId, { status: "blocked", actorAgentId: agentId });
+      return { exitCode: 0, signal: null, timedOut: false, errorMessage: null,
+        summary: "Synthetic dependency was resolved but work remains blocked.", provider: "test", model: "test-model" };
+    });
+    try {
+      expect((await heartbeat.reconcileResolvedDependencyWakes()).healed).toBe(1);
+      await heartbeat.drainActiveRunExecutions();
+      expect(statusesAtExecution).toEqual(["in_progress"]);
+      expect((await issueService(db).getById(blockedIssueId))?.status).toBe("blocked");
+      const second = await heartbeatService(db).reconcileResolvedDependencyWakes();
+      await heartbeat.drainActiveRunExecutions();
+      expect(second.healed).toBe(0);
+      expect(await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.companyId, companyId))).toHaveLength(1);
+      expect((await issueService(db).getById(blockedIssueId))?.blockedTransitionAt).toEqual(cycle);
+      // An ordinary checkout followed by an assignee reblock starts a new cycle.
+      await issueService(db).checkout(blockedIssueId, agentId, ["blocked"], null);
+      await issueService(db).update(blockedIssueId, { status: "blocked", actorAgentId: agentId });
+      expect((await issueService(db).getById(blockedIssueId))?.blockedTransitionAt).not.toEqual(cycle);
+      expect((await heartbeatService(db).reconcileResolvedDependencyWakes()).healed).toBe(1);
+      await heartbeat.drainActiveRunExecutions();
+    } finally {
+      mockAdapterExecute.mockReset();
+      mockAdapterExecute.mockResolvedValue({ exitCode: 0, signal: null, timedOut: false, errorMessage: null,
+        summary: "Acknowledged liveness escalation.", provider: "test", model: "test-model" });
+    }
+  });
+
+  it.each(["cycle", "old-state"])("deduplicates a coalesced dependency wake with a %s key", async (keyKind) => {
+    const { companyId, agentId, blockedIssueId, blockerIssueId } =
+      await seedResolvedDependencyBackstopFixture({ workspaceState: "none" });
+    const cycle = new Date("2026-08-01T12:00:00.000Z");
+    await db.update(issues).set({ blockedTransitionAt: cycle }).where(eq(issues.id, blockedIssueId));
+    const input = { dependentIssueId: blockedIssueId, blockerIssueIds: [blockerIssueId], blockedTransitionAt: cycle };
+    await db.insert(agentWakeupRequests).values({
+      companyId, agentId, source: "automation", reason: "issue_blockers_resolved",
+      status: "coalesced", requestedAt: cycle, finishedAt: cycle,
+      idempotencyKey: keyKind === "cycle" ? buildIssueBlockersResolvedWakeStateKey(input)
+        : buildIssueBlockersResolvedWakeStateKeyWithoutCycle(input),
+    });
+    const result = await heartbeatService(db).reconcileResolvedDependencyWakes();
+    expect(result.healed).toBe(0);
+    expect(result.existingWakeSkipped).toBe(1);
+    expect(mockAdapterExecute).not.toHaveBeenCalled();
+  });
+
+  it.each(["blocked", "backlog"].flatMap((status) =>
+    (["agent", "system"] as const).map((actor) => ({ status, actor })),
+  ))("rejects automatic queued work at admission for $status from $actor", async ({ status, actor }) => {
+    const { companyId, agentId, blockedIssueId } =
+      await seedResolvedDependencyBackstopFixture({ workspaceState: "none" });
+    await db.update(issues).set({ status }).where(eq(issues.id, blockedIssueId));
+    const heartbeat = heartbeatService(db);
+    await heartbeat.wakeup(agentId, {
+      source: "automation", reason: "issue_commented", requestedByActorType: actor,
+      requestedByActorId: "synthetic-caller", payload: { issueId: blockedIssueId },
+      contextSnapshot: { issueId: blockedIssueId, wakeRequestedByActorType: "user" },
+    });
+    await heartbeat.drainActiveRunExecutions();
+    expect(mockAdapterExecute).not.toHaveBeenCalled();
+    expect(await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.companyId, companyId))).toHaveLength(0);
+    expect((await issueService(db).getById(blockedIssueId))?.status).toBe(status);
+  });
+
+  it.each(["blocked", "backlog"])("dispatches a board comment and checks out %s", async (status) => {
+    const { companyId, agentId, ownerUserId, blockedIssueId } =
+      await seedResolvedDependencyBackstopFixture({ workspaceState: "none" });
+    await db.update(issues).set({ status }).where(eq(issues.id, blockedIssueId));
+    const [comment] = await db.insert(issueComments).values({
+      companyId, issueId: blockedIssueId, authorUserId: ownerUserId, body: "Synthetic board follow-up",
+    }).returning();
+    const statusesAtExecution: string[] = [];
+    mockAdapterExecute.mockImplementationOnce(async () => {
+      statusesAtExecution.push((await issueService(db).getById(blockedIssueId))!.status);
+      await db.update(issues).set({ status: "done" }).where(eq(issues.id, blockedIssueId));
+      return { exitCode: 0, signal: null, timedOut: false, errorMessage: null,
+        summary: "Synthetic board follow-up handled.", provider: "test", model: "test-model" };
+    });
+    const heartbeat = heartbeatService(db);
+    await heartbeat.wakeup(agentId, {
+      source: "automation", reason: "issue_commented", requestedByActorType: "user",
+      requestedByActorId: ownerUserId, payload: { issueId: blockedIssueId, commentId: comment!.id },
+      contextSnapshot: { issueId: blockedIssueId, wakeCommentId: comment!.id },
+    });
+    await heartbeat.drainActiveRunExecutions();
+    expect(statusesAtExecution).toEqual(["in_progress"]);
+    expect(mockAdapterExecute).toHaveBeenCalledTimes(1);
   });
 
   async function seedExecutionWait(status: "active" | "resolved" = "resolved") {

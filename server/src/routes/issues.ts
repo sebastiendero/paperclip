@@ -14629,6 +14629,7 @@ export function issueRoutes(
           const shouldWakeAssigneeForComment =
             shouldWakeAssigneeForIssueComment({
               selfComment,
+              requestedByActorType: actor.actorType,
               resumeRequested: resumeRequested === true,
               commentCreatedByRunId: comment.createdByRunId,
               issueAtCommentStart: existing,
@@ -18001,6 +18002,7 @@ export function issueRoutes(
         // explicit resume from a completed prior run remains a valid new turn.
         const shouldWakeAssigneeForComment = shouldWakeAssigneeForIssueComment({
           selfComment,
+          requestedByActorType: actor.actorType,
           resumeRequested: resumeRequested === true,
           commentCreatedByRunId: comment.createdByRunId,
           issueAtCommentStart: issue,

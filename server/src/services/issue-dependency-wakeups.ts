@@ -14,6 +14,7 @@ const IDEMPOTENT_DEPENDENCY_WAKE_STATUSES = [
   "deferred_issue_execution",
   "claimed",
   "completed",
+  "coalesced",
 ] as const;
 
 // A wake counts as "still in flight" for these statuses. The `completed` status
@@ -159,7 +160,7 @@ function wakeCoversIssueBlockersResolvedReadyState(
 
   if (idempotencyKey === keys.oldStateKey) {
     if (IN_FLIGHT_DEPENDENCY_WAKE_STATUS_SET.has(wake.status)) return true;
-    if (wake.status !== "completed") return false;
+    if (wake.status !== "completed" && wake.status !== "coalesced") return false;
     if (!keys.blockedTransitionAt) return true;
     return wake.requestedAt.getTime() >= keys.blockedTransitionAt.getTime();
   }

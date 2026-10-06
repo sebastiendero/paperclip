@@ -1756,6 +1756,64 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     expect(await getExecutionBlocker(db, companyId, issueId)).toBeNull();
   });
 
+  it.each([
+    { adapterType: "process", runStatus: "failed", historicalFingerprint: false },
+    { adapterType: "process", runStatus: "failed", historicalFingerprint: true },
+    { adapterType: "codex_local", runStatus: "interrupted", historicalFingerprint: false },
+  ] as const)("keeps one settled legacy recovery action across repeated sweeps ($adapterType, historical fingerprint: $historicalFingerprint)", async ({ adapterType, runStatus, historicalFingerprint }) => {
+    const { companyId, agentId, issueId, runId } = await seedStrandedIssueFixture({
+      status: "in_progress", runStatus: "failed", resultJson: {},
+    });
+    await db.update(agents).set({ adapterType }).where(eq(agents.id, agentId));
+    await db.update(heartbeatRuns).set({
+      status: runStatus,
+      runnerProfileJson: { adapterDispatch: { adapterType } },
+    }).where(eq(heartbeatRuns.id, runId));
+    // A different checkout makes the process hold obsolete without blocking
+    // the source task. Conversation holds instead fold on adapter evidence.
+    const checkoutRunId = adapterType === "process" ? randomUUID() : null;
+    if (checkoutRunId) {
+      await db.insert(heartbeatRuns).values({
+        id: checkoutRunId, companyId, agentId, status: "succeeded",
+      });
+      await db.update(issues).set({ checkoutRunId }).where(eq(issues.id, issueId));
+    }
+    const heartbeat = heartbeatService(db);
+    const { settleUnrecoverableExecutions } = await import("../services/execution-recovery-resolution.js");
+
+    for (let sweep = 0; sweep < 3; sweep += 1) {
+      await heartbeat.reconcileStrandedAssignedIssues();
+      await settleUnrecoverableExecutions(db);
+      if (sweep === 0 && historicalFingerprint) {
+        // Older records may carry a different identity but retain the decision
+        // receipt. Subsequent sweeps must honor that receipt independently.
+        await db.update(issueRecoveryActions).set({ fingerprint: `historical:${runId}` }).where(and(
+          eq(issueRecoveryActions.sourceIssueId, issueId),
+          eq(issueRecoveryActions.fingerprint, `legacy-execution:${runId}`),
+        ));
+      }
+    }
+
+    const actions = await db.select().from(issueRecoveryActions).where(and(
+      eq(issueRecoveryActions.companyId, companyId),
+      eq(issueRecoveryActions.sourceIssueId, issueId),
+      eq(issueRecoveryActions.cause, "legacy_execution_requires_reconciliation"),
+    ));
+    expect(actions).toHaveLength(1);
+    expect(actions[0]).toMatchObject({
+      fingerprint: historicalFingerprint ? `historical:${runId}` : `legacy-execution:${runId}`,
+      status: "resolved", outcome: "cancelled",
+    });
+    if (adapterType === "process") {
+      expect(actions[0].evidence.automaticRecovery).toMatchObject({ runId, replay: "blocked" });
+    } else {
+      expect(actions[0].resolutionNote).toBe("Conversation continuation does not replay prior tool calls.");
+    }
+    const [task] = await db.select().from(issues).where(eq(issues.id, issueId));
+    expect(task).toMatchObject({ status: "in_progress", checkoutRunId });
+    expect(await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.retryOfRunId, runId))).toHaveLength(0);
+  });
+
   it("keeps an unsafe Stop blocked when recovery sees a deferred human comment", async () => {
     const { companyId, agentId, issueId, runId } = await seedStrandedIssueFixture({
       status: "in_progress", runStatus: "cancelled",

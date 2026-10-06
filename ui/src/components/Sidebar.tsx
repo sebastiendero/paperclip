@@ -1,6 +1,5 @@
 import {
   Inbox,
-  MessageCircleQuestion,
   ListChecks,
   CircleCheck,
   Target,
@@ -176,15 +175,10 @@ export function Sidebar({ children }: { children?: ReactNode }) {
             badge={inboxBadge.inbox}
             badgeLabel="unread"
             badgeTone={inboxBadge.failedRuns > 0 ? "danger" : "default"}
-            alert={inboxBadge.failedRuns > 0}
-          />
-          <SidebarNavItem
-            to="/inbox/questions"
-            label="Questions"
-            icon={MessageCircleQuestion}
-            badge={boardQuestionCount}
-            badgeLabel="waiting for you"
-            badgeTone="warning"
+            alert={inboxBadge.failedRuns > 0 || boardQuestionCount > 0}
+            textBadge={boardQuestionCount > 0 ? `${boardQuestionCount} need you` : undefined}
+            textBadgeTone="amber"
+            trailingLabel={boardQuestionCount > 0 ? `${boardQuestionCount} requests need your input` : undefined}
           />
           {showDecisions ? (
             <SidebarNavItem

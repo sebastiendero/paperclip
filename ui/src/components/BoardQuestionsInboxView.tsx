@@ -1,15 +1,19 @@
 import { useMemo } from "react";
-import { AlertTriangle, CheckCircle2, Eye, MessageCircleQuestion, ShieldCheck } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
+import { AlertTriangle, ArrowUpRight, CheckCircle2, Eye, MessageCircleQuestion, ShieldCheck } from "lucide-react";
 import type { BoardQuestionItem } from "@paperclipai/shared";
 import { Link } from "@/lib/router";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { AttentionInteractionResolver } from "./AttentionInteractionResolver";
 import { useBoardQuestions } from "../hooks/useBoardQuestions";
+import { queryKeys } from "../lib/queryKeys";
 import { relativeTime } from "../lib/utils";
 
 interface BoardQuestionsInboxViewProps {
   companyId: string;
   searchQuery: string;
+  currentUserId?: string | null;
 }
 
 export function boardQuestionMatchesSearch(item: BoardQuestionItem, searchQuery: string): boolean {
@@ -19,7 +23,8 @@ export function boardQuestionMatchesSearch(item: BoardQuestionItem, searchQuery:
     .some((value) => value?.toLowerCase().includes(needle));
 }
 
-export function BoardQuestionsInboxView({ companyId, searchQuery }: BoardQuestionsInboxViewProps) {
+export function BoardQuestionsInboxView({ companyId, searchQuery, currentUserId }: BoardQuestionsInboxViewProps) {
+  const queryClient = useQueryClient();
   const { data, isLoading, error, refetch } = useBoardQuestions(companyId);
   const items = useMemo(
     () => (data?.items ?? []).filter((item) => boardQuestionMatchesSearch(item, searchQuery)),
@@ -28,9 +33,9 @@ export function BoardQuestionsInboxView({ companyId, searchQuery }: BoardQuestio
 
   if (isLoading) {
     return (
-      <div data-testid="board-questions-loading" className="space-y-2" aria-busy="true">
+      <div data-testid="board-questions-loading" className="space-y-3" aria-busy="true">
         {[0, 1, 2].map((index) => (
-          <div key={index} className="h-16 animate-pulse rounded-md bg-muted/60" />
+          <div key={index} className="h-32 animate-pulse rounded-lg bg-muted/60" />
         ))}
       </div>
     );
@@ -38,15 +43,10 @@ export function BoardQuestionsInboxView({ companyId, searchQuery }: BoardQuestio
 
   if (error) {
     return (
-      <div
-        role="alert"
-        className="flex items-start gap-2 rounded-md border border-amber-300/70 bg-amber-50/90 p-4 text-amber-900 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-200"
-      >
+      <div role="alert" className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-4 text-destructive">
         <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
         <p className="flex-1 text-sm font-medium">Couldn't load the questions waiting for you.</p>
-        <Button variant="outline" size="sm" className="h-7 shrink-0" onClick={() => void refetch()}>
-          Retry
-        </Button>
+        <Button variant="outline" size="sm" onClick={() => void refetch()}>Retry</Button>
       </div>
     );
   }
@@ -65,39 +65,52 @@ export function BoardQuestionsInboxView({ companyId, searchQuery }: BoardQuestio
   }
 
   return (
-    <ul data-testid="board-questions-list" className="divide-y divide-border rounded-md border border-border">
-      {items.map((item) => {
-        const Icon = item.kind === "approval_stage" ? ShieldCheck : item.kind === "review_stage" ? Eye : MessageCircleQuestion;
-        return (
-          <li key={item.id}>
-            <Link
-              to={item.href}
-              className="flex items-start gap-3 px-3 py-3 transition-colors hover:bg-accent/50"
-            >
-              <Icon className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden="true" />
-              <div className="min-w-0 flex-1 space-y-1">
-                <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                  <span className="font-mono text-xs text-muted-foreground">
-                    {item.issueIdentifier ?? item.issueId.slice(0, 8)}
-                  </span>
-                  <span className="text-sm font-medium text-foreground">{item.title}</span>
-                </div>
-                {item.question ? (
-                  <p className="line-clamp-3 whitespace-pre-line text-sm text-foreground/80">{item.question}</p>
-                ) : null}
-                <p className="truncate text-xs text-muted-foreground">{item.issueTitle}</p>
+    <section aria-label="Questions waiting for your answer" className="space-y-4">
+      <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3">
+        <p className="text-sm font-semibold text-foreground">
+          {items.length} {items.length === 1 ? "request needs your input" : "requests need your input"}
+        </p>
+        <p className="text-xs text-muted-foreground">Answer questions here. Open the task for approvals and reviews.</p>
+      </div>
+      <ul data-testid="board-questions-list" className="space-y-4">
+        {items.map((item) => {
+          const Icon = item.kind === "approval_stage" ? ShieldCheck : item.kind === "review_stage" ? Eye : MessageCircleQuestion;
+          return (
+            <li key={item.id} className="space-y-2">
+              <div className="flex flex-wrap items-center gap-2 px-1 text-xs text-muted-foreground">
+                <Icon className="h-4 w-4 text-amber-600 dark:text-amber-400" aria-hidden="true" />
+                <Link to={item.href} className="font-mono text-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                  {item.issueIdentifier ?? item.issueId.slice(0, 8)}
+                </Link>
+                <span aria-hidden="true">·</span>
+                <span className="min-w-0 flex-1 truncate">{item.issueTitle}</span>
+                <time dateTime={item.createdAt} title={new Date(item.createdAt).toLocaleString()}>
+                  {relativeTime(item.createdAt)}
+                </time>
               </div>
-              <time
-                dateTime={item.createdAt}
-                title={new Date(item.createdAt).toLocaleString()}
-                className="shrink-0 text-xs text-muted-foreground"
-              >
-                {relativeTime(item.createdAt)}
-              </time>
-            </Link>
-          </li>
-        );
-      })}
-    </ul>
+              {item.kind === "interaction" && item.interactionId ? (
+                <AttentionInteractionResolver
+                  companyId={companyId}
+                  issueId={item.issueId}
+                  interactionId={item.interactionId}
+                  currentUserId={currentUserId}
+                  onResolved={() => void queryClient.invalidateQueries({ queryKey: queryKeys.boardQuestions(companyId) })}
+                />
+              ) : (
+                <Card className="gap-4 border-amber-500/30 p-5 shadow-sm">
+                  <h2 className="text-base font-semibold text-foreground">{item.title}</h2>
+                  <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground">{item.question}</p>
+                  <div className="flex justify-end border-t border-border/70 pt-3">
+                    <Button variant="outline" size="sm" asChild>
+                      <Link to={item.href}>Review in task <ArrowUpRight className="h-3.5 w-3.5" aria-hidden="true" /></Link>
+                    </Button>
+                  </div>
+                </Card>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </section>
   );
 }

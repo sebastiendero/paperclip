@@ -2597,7 +2597,7 @@ export function Inbox() {
       {actionError && <p className="text-sm text-destructive">{actionError}</p>}
 
       {tab === "questions" ? (
-        <BoardQuestionsInboxView companyId={selectedCompanyId!} searchQuery={searchQuery} />
+        <BoardQuestionsInboxView companyId={selectedCompanyId!} searchQuery={searchQuery} currentUserId={currentUserId} />
       ) : null}
 
       {tab === "blocked" ? (

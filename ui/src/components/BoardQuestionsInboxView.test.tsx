@@ -22,6 +22,12 @@ vi.mock("@/lib/router", () => ({
   ),
 }));
 
+vi.mock("./AttentionInteractionResolver", () => ({
+  AttentionInteractionResolver: ({ interactionId }: { interactionId: string }) => (
+    <div data-testid="inline-question-form">Answer {interactionId}</div>
+  ),
+}));
+
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 function act(callback: () => void | Promise<void>) {
@@ -86,7 +92,7 @@ describe("BoardQuestionsInboxView", () => {
     container.remove();
   });
 
-  it("lists each waiting question with its task, text and a deep link to the card", async () => {
+  it("shows each waiting question as a full card with an inline response and a task link", async () => {
     mockAttentionApi.boardQuestions.mockResolvedValue({
       count: 2,
       items: [
@@ -113,11 +119,13 @@ describe("BoardQuestionsInboxView", () => {
     expect(links.map((link) => link.getAttribute("href"))).toEqual([
       "/REM/issues/REM-12#interaction-card-1",
       "/REM/issues/REM-13",
+      "/REM/issues/REM-13",
     ]);
-    expect(links[0]?.textContent).toContain("REM-12");
-    expect(links[0]?.textContent).toContain("Pick a supplier");
-    expect(links[0]?.textContent).toContain("Which supplier should we keep?");
-    expect(links[1]?.textContent).toContain("Approval requested");
+    expect(container.textContent).toContain("2 requests need your input");
+    expect(container.textContent).toContain("REM-12");
+    expect(container.querySelector('[data-testid="inline-question-form"]')?.textContent).toContain("card-1");
+    expect(container.textContent).toContain("Approval requested");
+    expect(container.textContent).toContain("Check the prices");
     act(() => root.unmount());
   });
 

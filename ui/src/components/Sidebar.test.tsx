@@ -358,17 +358,16 @@ describe("Sidebar", () => {
     });
   });
 
-  it("links Questions to the Inbox tab with the number of questions waiting", async () => {
+  it("shows the number of waiting questions on Inbox without a separate Questions link", async () => {
     mockInstanceSettingsApi.getExperimental.mockResolvedValue({});
     mockAttentionApi.boardQuestions.mockResolvedValue({ items: [], count: 3 });
     const root = await renderSidebar();
 
     const primaryNavLinks = [...container.querySelectorAll("nav > div:first-child a")];
     const inboxIndex = primaryNavLinks.findIndex((anchor) => anchor.getAttribute("href") === "/inbox");
-    const questionsLink = primaryNavLinks.find((anchor) => anchor.getAttribute("href") === "/inbox/questions");
-    expect(questionsLink?.textContent).toContain("Questions");
-    expect(questionsLink?.textContent).toContain("3");
-    expect(primaryNavLinks.indexOf(questionsLink!)).toBe(inboxIndex + 1);
+    const inboxLink = primaryNavLinks[inboxIndex];
+    expect(inboxLink?.textContent).toContain("3 need you");
+    expect(primaryNavLinks.some((anchor) => anchor.getAttribute("href") === "/inbox/questions")).toBe(false);
 
     flushSync(() => {
       root.unmount();

@@ -111,6 +111,14 @@ describe("company routes", () => {
     expect(toCompanyRelativePath("/PAP/tools/runtime")).toBe("/tools/runtime");
   });
 
+  it("routes Browser & Terminal through the active company", () => {
+    expect(isBoardPathWithoutPrefix("/operator-tools")).toBe(true);
+    expect(extractCompanyPrefixFromPath("/operator-tools")).toBeNull();
+    expect(applyCompanyPrefix("/operator-tools", "REM")).toBe("/REM/operator-tools");
+    expect(applyCompanyPrefix("/REM/operator-tools", "REM")).toBe("/REM/operator-tools");
+    expect(toCompanyRelativePath("/REM/operator-tools")).toBe("/operator-tools");
+  });
+
   it("recognizes Decisions without retaining the legacy attention route", () => {
     expect(isBoardPathWithoutPrefix("/decisions")).toBe(true);
     expect(extractCompanyPrefixFromPath("/decisions")).toBeNull();

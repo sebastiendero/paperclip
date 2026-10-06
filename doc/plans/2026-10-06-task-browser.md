@@ -53,3 +53,7 @@
 - [ ] Install Chromium for the Paperclip service account and verify a browser starts without root privileges.
 - [ ] Have an agent navigate a test page; confirm the operator sees the same URL and image.
 - [ ] Take control, click/type, confirm the agent receives a control conflict, release, and confirm agent access resumes.
+
+## Follow-up: direct operator access and security
+
+The main navigation now opens a separate, personal Browser & Terminal page for instance administrators. The task browser remains shared with its agent. An agent can load only running runtime service origins attached to its task; HTTP requests and WebSocket connections to other origins are blocked. When an administrator releases control after browsing elsewhere, the task page returns to a blank page before the agent resumes. The administrator's personal browser is separate from every task browser.

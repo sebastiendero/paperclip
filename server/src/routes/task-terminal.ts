@@ -7,7 +7,7 @@ import { executionWorkspaces } from "@paperclipai/db";
 import { conflict } from "../errors.js";
 import { issueService, logActivity } from "../services/index.js";
 import { taskTerminalSessions } from "../services/task-terminal-sessions.js";
-import { assertBoard, getAccessibleResource } from "./authz.js";
+import { assertInstanceAdmin, getAccessibleResource } from "./authz.js";
 
 export function taskTerminalRoutes(db: Db) {
   const router = Router();
@@ -17,7 +17,7 @@ export function taskTerminalRoutes(db: Db) {
     const issueId = req.params.issueId as string;
     const issue = await getAccessibleResource(req, res, issues.getById(issueId), "Task not found");
     if (!issue) return;
-    assertBoard(req);
+    assertInstanceAdmin(req);
     if (!issue.executionWorkspaceId) {
       throw conflict("This task has no execution workspace. Assign a local workspace before opening a terminal.");
     }

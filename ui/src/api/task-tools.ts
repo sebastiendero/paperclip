@@ -16,12 +16,15 @@ export type TaskBrowserAction =
   | { type: "key"; key: string }
   | { type: "scroll"; x: number; y: number };
 
-function base(issueId: string) { return `/issues/${encodeURIComponent(issueId)}`; }
+function toolsApi(base: (id: string) => string) {
+  return {
+    createTerminalSession: (id: string) => api.post<{ token: string; websocketPath: string }>(`${base(id)}/terminal/session`, {}),
+    browserState: (id: string) => api.get<TaskBrowserState>(`${base(id)}/browser/state`, { cache: "no-store" }),
+    browserScreenshot: (id: string) => api.get<{ revision: number; data: string }>(`${base(id)}/browser/screenshot`, { cache: "no-store" }),
+    browserControl: (id: string, operation: "take" | "release") => api.post<TaskBrowserState["control"]>(`${base(id)}/browser/control`, { operation }),
+    browserAction: (id: string, action: TaskBrowserAction) => api.post<{ url: string; revision: number }>(`${base(id)}/browser/action`, action),
+  };
+}
 
-export const taskToolsApi = {
-  createTerminalSession: (issueId: string) => api.post<{ token: string; websocketPath: string }>(`${base(issueId)}/terminal/session`, {}),
-  browserState: (issueId: string) => api.get<TaskBrowserState>(`${base(issueId)}/browser/state`, { cache: "no-store" }),
-  browserScreenshot: (issueId: string) => api.get<{ revision: number; data: string }>(`${base(issueId)}/browser/screenshot`, { cache: "no-store" }),
-  browserControl: (issueId: string, operation: "take" | "release") => api.post<TaskBrowserState["control"]>(`${base(issueId)}/browser/control`, { operation }),
-  browserAction: (issueId: string, action: TaskBrowserAction) => api.post<{ url: string; revision: number }>(`${base(issueId)}/browser/action`, action),
-};
+export const taskToolsApi = toolsApi((issueId) => `/issues/${encodeURIComponent(issueId)}`);
+export const operatorToolsApi = toolsApi((companyId) => `/companies/${encodeURIComponent(companyId)}/operator`);

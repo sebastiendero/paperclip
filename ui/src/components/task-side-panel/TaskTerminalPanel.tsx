@@ -3,10 +3,13 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { Button } from "@/components/ui/button";
-import { taskToolsApi } from "@/api/task-tools";
+import { operatorToolsApi, taskToolsApi } from "@/api/task-tools";
 import { buildSameOriginWebSocketUrl } from "@/lib/websocket-url";
+import { Link } from "@/lib/router";
 
-export function TaskTerminalPanel({ issueId }: { issueId: string }) {
+export function TaskTerminalPanel({ issueId, companyId }: { issueId?: string; companyId?: string }) {
+  const targetId = companyId ?? issueId!;
+  const toolsApi = companyId ? operatorToolsApi : taskToolsApi;
   const elementRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -22,7 +25,7 @@ export function TaskTerminalPanel({ issueId }: { issueId: string }) {
     setStatus("connecting");
     setMessage(null);
     try {
-      const ticket = await taskToolsApi.createTerminalSession(issueId);
+      const ticket = await toolsApi.createTerminalSession(targetId);
       if (version !== connectionVersionRef.current) return;
       const socket = new WebSocket(buildSameOriginWebSocketUrl(ticket.websocketPath));
       socketRef.current = socket;
@@ -49,7 +52,7 @@ export function TaskTerminalPanel({ issueId }: { issueId: string }) {
       setStatus("error");
       setMessage(error instanceof Error ? error.message : "Terminal unavailable.");
     }
-  }, [issueId]);
+  }, [targetId, toolsApi]);
 
   useEffect(() => {
     const element = elementRef.current;
@@ -87,10 +90,11 @@ export function TaskTerminalPanel({ issueId }: { issueId: string }) {
 
   return <div className="flex h-full min-h-0 flex-col bg-card">
     <div className="flex items-center justify-between border-b border-border px-3 py-2 text-xs text-muted-foreground">
-      <span>Task workspace terminal · {status}</span>
+      <span>{companyId ? "Paperclip server terminal" : "Task workspace terminal"} · {status}</span>
       {status !== "connected" && <Button size="sm" variant="outline" onClick={() => setAttempt((value) => value + 1)}>Reconnect</Button>}
     </div>
     {message && <p role="alert" className="px-3 py-2 text-xs text-destructive">{message}</p>}
-    <div ref={elementRef} className="min-h-0 flex-1 overflow-hidden p-2" aria-label="Task terminal" />
+    {message?.includes("execution workspace") && !companyId && <p className="px-3 pb-2 text-xs text-muted-foreground">For a terminal without a task workspace, open <Link to="/operator-tools" className="underline">Browser &amp; Terminal</Link> from the sidebar.</p>}
+    <div ref={elementRef} className="min-h-0 flex-1 overflow-hidden p-2" aria-label={companyId ? "Paperclip server terminal" : "Task terminal"} />
   </div>;
 }

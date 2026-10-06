@@ -6,7 +6,8 @@ import { heartbeatRuns } from "@paperclipai/db";
 import { forbidden } from "../errors.js";
 import { issueService, logActivity } from "../services/index.js";
 import { taskBrowserSessions, type BrowserAction } from "../services/task-browser-sessions.js";
-import { assertBoard, getAccessibleResource } from "./authz.js";
+import { configureTaskBrowserOrigins } from "../services/task-browser-policy.js";
+import { assertInstanceAdmin, getAccessibleResource } from "./authz.js";
 
 const actionSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("navigate"), url: z.string().trim().min(1).max(2048) }),
@@ -24,6 +25,7 @@ export function taskBrowserRoutes(db: Db) {
   async function authorizedIssue(req: Request, res: Response) {
     const issue = await getAccessibleResource(req, res, issues.getById(req.params.issueId as string), "Task not found");
     if (!issue) return null;
+    if (req.actor.type === "board") assertInstanceAdmin(req);
     if (req.actor.type === "agent") {
       const runId = req.actor.runId?.trim();
       if (!runId || !req.actor.agentId) throw forbidden("An active task run is required for the browser.");
@@ -41,6 +43,7 @@ export function taskBrowserRoutes(db: Db) {
         throw forbidden("This agent run is not active on this task.");
       }
     }
+    await configureTaskBrowserOrigins(db, issue);
     return issue;
   }
 
@@ -61,7 +64,7 @@ export function taskBrowserRoutes(db: Db) {
   router.post("/issues/:issueId/browser/control", async (req, res) => {
     const issue = await authorizedIssue(req, res);
     if (!issue) return;
-    assertBoard(req);
+    assertInstanceAdmin(req);
     const input = z.object({ operation: z.enum(["take", "release"]) }).parse(req.body);
     const userId = req.actor.userId ?? "local-board";
     const control = await taskBrowserSessions.control(issue.id, userId, input.operation);
@@ -100,7 +103,7 @@ export function taskBrowserRoutes(db: Db) {
   router.delete("/issues/:issueId/browser", async (req, res) => {
     const issue = await authorizedIssue(req, res);
     if (!issue) return;
-    assertBoard(req);
+    assertInstanceAdmin(req);
     await taskBrowserSessions.close(issue.id);
     await logActivity(db, {
       companyId: issue.companyId,

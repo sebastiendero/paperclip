@@ -1,5 +1,5 @@
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
-import { conflict, badRequest } from "../errors.js";
+import { conflict, badRequest, forbidden } from "../errors.js";
 
 const IDLE_MS = 15 * 60_000;
 const CONTROL_MS = 5 * 60_000;
@@ -21,15 +21,30 @@ interface TaskBrowserSession {
   revision: number;
   controller: { userId: string; until: number } | null;
   queue: Promise<unknown>;
+  agentOrigins: Set<string>;
 }
 
 export class TaskBrowserSessionManager {
   private browserPromise: Promise<Browser> | null = null;
   private stopping = false;
   private readonly sessions = new Map<string, Promise<TaskBrowserSession>>();
+  private readonly allowedAgentOrigins = new Map<string, Set<string>>();
   private readonly sweepTimer = setInterval(() => { void this.sweep(); }, 60_000);
 
   constructor() { this.sweepTimer.unref?.(); }
+
+  async allowAgentOrigins(issueId: string, urls: string[]) {
+    const origins = new Set<string>();
+    for (const value of urls) {
+      try {
+        const url = new URL(value);
+        if (url.protocol === "http:" || url.protocol === "https:") origins.add(url.origin);
+      } catch { /* Invalid service URLs do not grant browser access. */ }
+    }
+    this.allowedAgentOrigins.set(issueId, origins);
+    const pending = this.sessions.get(issueId);
+    if (pending) (await pending).agentOrigins = origins;
+  }
 
   private async browser(): Promise<Browser> {
     if (!this.browserPromise) {
@@ -54,10 +69,33 @@ export class TaskBrowserSessionManager {
         await this.close(oldest.id);
       }
       promise = (async () => {
-        const context = await (await this.browser()).newContext({ viewport: VIEWPORT, acceptDownloads: false });
+        const context = await (await this.browser()).newContext({ viewport: VIEWPORT, acceptDownloads: false, serviceWorkers: "block" });
         try {
           const page = await context.newPage();
-          return { context, page, lastUsedAt: Date.now(), revision: 0, controller: null, queue: Promise.resolve() };
+          const session: TaskBrowserSession = { context, page, lastUsedAt: Date.now(), revision: 0,
+            controller: null, queue: Promise.resolve(), agentOrigins: this.allowedAgentOrigins.get(issueId) ?? new Set() };
+          await context.route("**/*", async (route) => {
+            let allowed = Boolean(session.controller && session.controller.until > Date.now());
+            if (!allowed) {
+              try { allowed = session.agentOrigins.has(new URL(route.request().url()).origin); }
+              catch { allowed = false; }
+            }
+            if (allowed) await route.continue();
+            else await route.abort("blockedbyclient");
+          });
+          await context.routeWebSocket("**/*", async (socket) => {
+            let allowed = Boolean(session.controller && session.controller.until > Date.now());
+            if (!allowed) {
+              try {
+                const url = new URL(socket.url());
+                url.protocol = url.protocol === "wss:" ? "https:" : "http:";
+                allowed = session.agentOrigins.has(url.origin);
+              } catch { allowed = false; }
+            }
+            if (allowed) await socket.connectToServer();
+            else await socket.close({ code: 1008, reason: "Browser destination is not allowed" });
+          });
+          return session;
         } catch (error) {
           await context.close();
           throw error;
@@ -116,6 +154,12 @@ export class TaskBrowserSessionManager {
         if (session.controller && session.controller.userId !== userId) throw conflict("Another operator is controlling this task browser.");
         session.controller = { userId, until: Date.now() + CONTROL_MS };
       } else if (session.controller?.userId === userId) {
+        let currentOrigin = "";
+        try { currentOrigin = new URL(session.page.url()).origin; } catch { /* Blank page. */ }
+        if (currentOrigin && !session.agentOrigins.has(currentOrigin)) {
+          await session.page.goto("about:blank");
+          session.revision += 1;
+        }
         session.controller = null;
       }
       return { by: session.controller ? "human" as const : "agent" as const, until: session.controller?.until ?? null };
@@ -136,6 +180,9 @@ export class TaskBrowserSessionManager {
           let url: URL;
           try { url = new URL(action.url); } catch { throw badRequest("Enter a complete http or https URL."); }
           if (!(["http:", "https:"].includes(url.protocol))) throw badRequest("Only http and https URLs are supported.");
+          if (actor.type === "agent" && !session.agentOrigins.has(url.origin)) {
+            throw forbidden("Agent browser access is limited to running services of this task workspace.");
+          }
           await page.goto(url.href, { waitUntil: "domcontentloaded", timeout: 20_000 });
           break;
         }
@@ -156,6 +203,7 @@ export class TaskBrowserSessionManager {
   async close(issueId: string) {
     const pending = this.sessions.get(issueId);
     this.sessions.delete(issueId);
+    this.allowedAgentOrigins.delete(issueId);
     if (!pending) return;
     const session = await pending.catch(() => null);
     if (session) await session.queue.then(() => session.context.close()).catch(() => undefined);

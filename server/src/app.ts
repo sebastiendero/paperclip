@@ -67,6 +67,7 @@ import { projectRoutes } from "./routes/projects.js";
 import { issueRoutes } from "./routes/issues.js";
 import { taskTerminalRoutes } from "./routes/task-terminal.js";
 import { taskBrowserRoutes } from "./routes/task-browser.js";
+import { operatorToolsRoutes } from "./routes/operator-tools.js";
 import { issueTreeControlRoutes } from "./routes/issue-tree-control.js";
 import { caseRoutes } from "./routes/cases.js";
 import { fileResourceRoutes } from "./routes/file-resources.js";
@@ -846,6 +847,7 @@ export async function createApp(
   }));
   api.use(taskTerminalRoutes(db));
   api.use(taskBrowserRoutes(db));
+  api.use(operatorToolsRoutes(db));
   api.use(slackToolRoutes(db, opts.authPublicBaseUrl));
   app.locals.toolGateway = toolGateway;
   registerAssignedMcpGateway(db, toolGateway);

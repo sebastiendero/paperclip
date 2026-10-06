@@ -14,11 +14,13 @@ export function setupTaskTerminalWebSocketServer(server: HttpServer): void {
   server.on("upgrade", (request, socket, head) => {
     const req = request as UpgradeRequest;
     if (req.paperclipWebSocketHandled || !req.url) return;
-    const match = new URL(req.url, "http://localhost").pathname.match(/^\/api\/issues\/([0-9a-f-]{36})\/terminal\/ws$/i);
-    if (!match) return;
+    const pathname = new URL(req.url, "http://localhost").pathname;
+    const taskMatch = pathname.match(/^\/api\/issues\/([0-9a-f-]{36})\/terminal\/ws$/i);
+    const operatorMatch = pathname.match(/^\/api\/companies\/([0-9a-f-]{36})\/operator\/([^/]+)\/terminal\/ws$/i);
+    if (!taskMatch && !operatorMatch) return;
     req.paperclipWebSocketHandled = true;
-    const issueId = match[1];
-    if (!issueId) return reject(socket);
+    const sessionKey = taskMatch?.[1] ?? (operatorMatch ? `operator:${operatorMatch[1]}:${operatorMatch[2] ?? ""}` : null);
+    if (!sessionKey) return reject(socket);
     wss.handleUpgrade(request, socket, head, (ws: WebSocket) => {
       const authTimer = setTimeout(() => ws.close(1008, "authentication_timeout"), 10_000);
       const authenticate = (raw: unknown) => {
@@ -29,7 +31,7 @@ export function setupTaskTerminalWebSocketServer(server: HttpServer): void {
           const frame = JSON.parse(String(raw)) as { type?: string; token?: string };
           if (frame.type === "auth" && typeof frame.token === "string") token = frame.token;
         } catch { /* Invalid authentication frame. */ }
-        if (!token || !taskTerminalSessions.attach(issueId, token, ws)) ws.close(1008, "invalid_terminal_token");
+        if (!token || !taskTerminalSessions.attach(sessionKey, token, ws)) ws.close(1008, "invalid_terminal_token");
       };
       ws.on("message", authenticate);
       ws.on("close", () => clearTimeout(authTimer));

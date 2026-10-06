@@ -45,3 +45,7 @@
 - [ ] Build on the Paperclip server without restarting active agent runs until the build passes.
 - [ ] Open a task with a local workspace, run `pwd` in the terminal, and confirm its path equals that task's workspace.
 - [ ] Confirm a task from another company and a task with no local workspace cannot open a shell.
+
+## Follow-up: direct operator access and security
+
+The main navigation now offers an instance terminal without opening a task. It starts in the Paperclip server directory under the Paperclip service account and uses a personal, single-use WebSocket ticket. Both the direct terminal and task terminals require instance administrator access. Task terminals still require an active local execution workspace; the direct terminal is available when a task has none.

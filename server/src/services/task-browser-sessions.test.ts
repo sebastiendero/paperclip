@@ -7,13 +7,21 @@ import { TaskBrowserSessionManager } from "./task-browser-sessions.js";
 
 function fakeBrowser() {
   const pages: Array<{ currentUrl: string; clicks: number }> = [];
+  const routes: Array<{
+    http?: (route: { request: () => { url: () => string }; continue: () => Promise<void>; abort: () => Promise<void> }) => Promise<void>;
+    websocket?: (socket: { url: () => string; connectToServer: () => Promise<void>; close: () => Promise<void> }) => Promise<void>;
+  }> = [];
   const close = vi.fn(async () => undefined);
   launch.mockImplementation(async () => ({
     newContext: async () => {
       const data = { currentUrl: "about:blank", clicks: 0 };
+      const handlers: (typeof routes)[number] = {};
       pages.push(data);
+      routes.push(handlers);
       return {
         close,
+        route: async (_pattern: string, handler: typeof handlers.http) => { handlers.http = handler; },
+        routeWebSocket: async (_pattern: string, handler: typeof handlers.websocket) => { handlers.websocket = handler; },
         newPage: async () => ({
           url: () => data.currentUrl,
           title: async () => data.currentUrl,
@@ -32,7 +40,7 @@ function fakeBrowser() {
     },
     close,
   }));
-  return { pages, close };
+  return { pages, routes, close };
 }
 
 describe("task browser sessions", () => {
@@ -42,6 +50,7 @@ describe("task browser sessions", () => {
 
   it("shares one page for an agent and operator, pausing agent actions during takeover", async () => {
     const browser = fakeBrowser();
+    await manager.allowAgentOrigins("issue-a", ["https://example.com/"]);
     await manager.act("issue-a", { type: "agent" }, { type: "navigate", url: "https://example.com/" });
     expect((await manager.state("issue-a")).url).toBe("https://example.com/");
     expect(browser.pages).toHaveLength(1);
@@ -57,11 +66,27 @@ describe("task browser sessions", () => {
 
   it("isolates tasks and rejects unsafe navigation", async () => {
     const browser = fakeBrowser();
+    await manager.allowAgentOrigins("issue-a", ["https://a.example/"]);
+    await manager.allowAgentOrigins("issue-b", ["https://b.example/"]);
     await manager.act("issue-a", { type: "agent" }, { type: "navigate", url: "https://a.example/" });
     await manager.act("issue-b", { type: "agent" }, { type: "navigate", url: "https://b.example/" });
     expect(browser.pages).toHaveLength(2);
     expect((await manager.state("issue-a")).url).toBe("https://a.example/");
     expect((await manager.state("issue-b")).url).toBe("https://b.example/");
     await expect(manager.act("issue-a", { type: "agent" }, { type: "navigate", url: "file:///etc/passwd" })).rejects.toMatchObject({ status: 400 });
+  });
+
+  it("confines an agent to approved task service origins", async () => {
+    const browser = fakeBrowser();
+    await manager.allowAgentOrigins("issue-a", ["http://127.0.0.1:4173"]);
+    await manager.act("issue-a", { type: "agent" }, { type: "navigate", url: "http://127.0.0.1:4173/" });
+    await expect(manager.act("issue-a", { type: "agent" }, { type: "navigate", url: "http://127.0.0.1:3100/api/companies" })).rejects.toMatchObject({ status: 403 });
+    await expect(manager.act("issue-a", { type: "agent" }, { type: "navigate", url: "http://169.254.169.254/latest/meta-data" })).rejects.toMatchObject({ status: 403 });
+    const httpAbort = vi.fn(async () => undefined);
+    await browser.routes[0]?.http?.({ request: () => ({ url: () => "http://127.0.0.1:3100/api" }), continue: vi.fn(), abort: httpAbort });
+    expect(httpAbort).toHaveBeenCalled();
+    const websocketClose = vi.fn(async () => undefined);
+    await browser.routes[0]?.websocket?.({ url: () => "ws://127.0.0.1:3100/api", connectToServer: vi.fn(), close: websocketClose });
+    expect(websocketClose).toHaveBeenCalled();
   });
 });

@@ -3,6 +3,7 @@ import type { Db } from "@paperclipai/db";
 import { projectToolContext } from "../services/project-tool-context.js";
 import { BROWSER_TOOL_SCHEMAS, callProjectTool, isBrowserToolName, projectToolDefinitions } from "../services/project-tools.js";
 import { taskBrowserSessions } from "../services/task-browser-sessions.js";
+import { configureTaskBrowserOrigins } from "../services/task-browser-policy.js";
 import { logActivity } from "../services/activity-log.js";
 import { assertCompanyAccess } from "./authz.js";
 import { forbidden } from "../errors.js";
@@ -24,6 +25,7 @@ export function projectToolRoutes(db: Db) {
       const toolName = typeof params?.name === "string" ? params.name : "";
       if (!definitions.some(tool => tool.name === toolName)) throw forbidden("Tool is unavailable in this mode");
       if (isBrowserToolName(toolName)) {
+        await configureTaskBrowserOrigins(db, context.issue);
         const name = toolName;
         const args = BROWSER_TOOL_SCHEMAS[name].parse(params.arguments ?? {}) as Record<string, unknown>;
         const issueId = context.issue.id;

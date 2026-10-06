@@ -38,6 +38,7 @@ import { Search } from "./pages/Search";
 import { OperatorTools } from "./pages/OperatorTools";
 import { IssueDetail } from "./pages/IssueDetail";
 import { AgentChat } from "./pages/AgentChat";
+import { AgentChatsHome } from "./pages/AgentChatsHome";
 import { IssueChatLongThreadPerf } from "./pages/IssueChatLongThreadPerf";
 import { Routines } from "./pages/Routines";
 import { Learnings, PipelineItemDetail, PipelineItemLegacyRedirect, Pipelines, ReviewQueue } from "./pages/Pipelines";
@@ -306,6 +307,7 @@ function boardRoutes(streamlinedUiEnabled: boolean) {
       <Route path="issues/backlog" element={<Navigate to="/issues" replace />} />
       <Route path="issues/done" element={<Navigate to="/issues" replace />} />
       <Route path="issues/recent" element={<Navigate to="/issues" replace />} />
+      <Route path="chats" element={<AgentChatsHome />} />
       <Route path="chats/:agentRef" element={<AgentChat />} />
       <Route path="issues/:issueId" element={<IssueDetail />} />
       {import.meta.env.DEV ? (
@@ -787,6 +789,8 @@ export function App() {
           <Route path="companies" element={<UnprefixedBoardRedirect />} />
           <Route path="issues" element={<UnprefixedBoardRedirect />} />
           <Route path="tasks" element={<UnprefixedBoardRedirect />} />
+          <Route path="chats" element={<UnprefixedBoardRedirect />} />
+          <Route path="chats/:agentRef" element={<UnprefixedBoardRedirect />} />
           <Route path="operator-tools/*" element={<UnprefixedBoardRedirect recoverOperatorToolsPrefix />} />
           <Route path="issues/:issueId" element={<UnprefixedBoardRedirect />} />
           <Route path="routines" element={<UnprefixedBoardRedirect />} />

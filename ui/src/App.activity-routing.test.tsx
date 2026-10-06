@@ -93,6 +93,20 @@ vi.mock("./pages/Issues", () => ({
   },
 }));
 
+vi.mock("./pages/OperatorTools", () => ({
+  OperatorTools: () => {
+    const location = useLocation();
+    return <div>{`OPERATOR_TOOLS@${location.pathname}`}</div>;
+  },
+}));
+
+vi.mock("./pages/Artifacts", () => ({
+  Artifacts: () => {
+    const location = useLocation();
+    return <div>{`ARTIFACTS_PAGE@${location.pathname}`}</div>;
+  },
+}));
+
 vi.mock("./pages/audit/CompanyActivity.production", () => ({
   CompanyActivity: () => {
     const location = useLocation();
@@ -258,6 +272,24 @@ describe("App Activity routing (PAP-16302)", () => {
     const root = renderAppAt(container, "/tasks");
     await waitForRoute(container, "TASKS_PAGE@/PAP/issues");
     expect(container.textContent).not.toContain("/tasks/dashboard");
+    flushSync(() => root.unmount());
+  });
+
+  it("redirects the bare Browser & Terminal URL into the selected company", async () => {
+    const root = renderAppAt(container, "/operator-tools");
+    await waitForRoute(container, "OPERATOR_TOOLS@/PAP/operator-tools");
+    flushSync(() => root.unmount());
+  });
+
+  it("recovers links created under the invalid OPERATOR-TOOLS company prefix", async () => {
+    const root = renderAppAt(container, "/OPERATOR-TOOLS/activity?mode=agents");
+    await waitForRoute(container, "ACTIVITY_PAGE@/PAP/activity?mode=agents");
+    flushSync(() => root.unmount());
+  });
+
+  it("recovers the Artifacts URL shown in the reported error", async () => {
+    const root = renderAppAt(container, "/OPERATOR-TOOLS/artifacts");
+    await waitForRoute(container, "ARTIFACTS_PAGE@/PAP/artifacts");
     flushSync(() => root.unmount());
   });
 

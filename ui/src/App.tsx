@@ -668,7 +668,11 @@ function AuditCompatibilityRedirect({
   return <Navigate to={`${to}${search ? `?${search}` : ""}${location.hash}`} replace />;
 }
 
-function UnprefixedBoardRedirect() {
+function UnprefixedBoardRedirect({
+  recoverOperatorToolsPrefix = false,
+}: {
+  recoverOperatorToolsPrefix?: boolean;
+} = {}) {
   const location = useLocation();
   const { companies, selectedCompany, loading } = useCompany();
 
@@ -689,12 +693,24 @@ function UnprefixedBoardRedirect() {
     return <NoCompaniesStartPage />;
   }
 
+  const pathname = recoverOperatorToolsPrefix
+    ? location.pathname.replace(/^\/operator-tools(?=\/|$)/i, "") || "/operator-tools"
+    : location.pathname;
+
   return (
     <Navigate
-      to={`/${targetCompany.issuePrefix}${location.pathname}${location.search}${location.hash}`}
+      to={`/${targetCompany.issuePrefix}${pathname}${location.search}${location.hash}`}
       replace
     />
   );
+}
+
+function CompanyBoardLayout({ streamlinedUiEnabled }: { streamlinedUiEnabled: boolean }) {
+  const { companyPrefix } = useParams<{ companyPrefix?: string }>();
+  if (companyPrefix?.toUpperCase() === "OPERATOR-TOOLS") {
+    return <UnprefixedBoardRedirect recoverOperatorToolsPrefix />;
+  }
+  return streamlinedUiEnabled ? <Layout /> : <ProductionLayout />;
 }
 
 function NoCompaniesStartPage() {
@@ -771,7 +787,7 @@ export function App() {
           <Route path="companies" element={<UnprefixedBoardRedirect />} />
           <Route path="issues" element={<UnprefixedBoardRedirect />} />
           <Route path="tasks" element={<UnprefixedBoardRedirect />} />
-          <Route path="operator-tools" element={<UnprefixedBoardRedirect />} />
+          <Route path="operator-tools/*" element={<UnprefixedBoardRedirect recoverOperatorToolsPrefix />} />
           <Route path="issues/:issueId" element={<UnprefixedBoardRedirect />} />
           <Route path="routines" element={<UnprefixedBoardRedirect />} />
           <Route path="routines/:routineId" element={<UnprefixedBoardRedirect />} />
@@ -833,7 +849,7 @@ export function App() {
           <Route path="execution-workspaces/:workspaceId/runtime-logs" element={<UnprefixedExecutionWorkspaceRedirect />} />
           <Route path="execution-workspaces/:workspaceId/issues" element={<UnprefixedExecutionWorkspaceRedirect />} />
           <Route path="execution-workspaces/:workspaceId/routines" element={<UnprefixedExecutionWorkspaceRedirect />} />
-          <Route path=":companyPrefix" element={streamlinedUiEnabled ? <Layout /> : <ProductionLayout />}>
+          <Route path=":companyPrefix" element={<CompanyBoardLayout streamlinedUiEnabled={streamlinedUiEnabled} />}>
             {boardRoutes(streamlinedUiEnabled)}
           </Route>
           <Route path="*" element={<NotFoundPage scope="global" />} />

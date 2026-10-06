@@ -55,8 +55,13 @@ export class TaskBrowserSessionManager {
       }
       promise = (async () => {
         const context = await (await this.browser()).newContext({ viewport: VIEWPORT, acceptDownloads: false });
-        const page = await context.newPage();
-        return { context, page, lastUsedAt: Date.now(), revision: 0, controller: null, queue: Promise.resolve() };
+        try {
+          const page = await context.newPage();
+          return { context, page, lastUsedAt: Date.now(), revision: 0, controller: null, queue: Promise.resolve() };
+        } catch (error) {
+          await context.close();
+          throw error;
+        }
       })().catch((error: unknown) => {
         this.sessions.delete(issueId);
         throw error;

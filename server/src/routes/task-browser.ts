@@ -102,6 +102,14 @@ export function taskBrowserRoutes(db: Db) {
     if (!issue) return;
     assertBoard(req);
     await taskBrowserSessions.close(issue.id);
+    await logActivity(db, {
+      companyId: issue.companyId,
+      actorType: "user",
+      actorId: req.actor.userId ?? "local-board",
+      action: "issue.browser_closed",
+      entityType: "issue",
+      entityId: issue.id,
+    });
     res.status(204).end();
   });
 

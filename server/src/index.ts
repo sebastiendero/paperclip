@@ -60,6 +60,7 @@ import { getOperatorSettingDefaults } from "./services/setting-defaults.js";
 import { setupEnvironmentCustomImageTerminalWebSocketServer } from "./realtime/environment-custom-image-terminal-ws.js";
 import { setupTaskTerminalWebSocketServer } from "./realtime/task-terminal-ws.js";
 import { taskBrowserSessions } from "./services/task-browser-sessions.js";
+import { taskTerminalSessions } from "./services/task-terminal-sessions.js";
 import { setupLiveEventsWebSocketServer } from "./realtime/live-events-ws.js";
 import { setupRunnerPrpWebSocketServer } from "./realtime/runner-prp-ws.js";
 import { cloudActorHeaderSourceFromHeaders, resolveCloudTenantActor } from "./middleware/auth.js";
@@ -1995,6 +1996,7 @@ async function startServerWithDatabaseTeardown(
     }
 
     await taskBrowserSessions.closeAll();
+    taskTerminalSessions.closeAll();
 
     const appShutdown = (app as { locals?: { paperclipShutdown?: () => Promise<void> } }).locals
       ?.paperclipShutdown;

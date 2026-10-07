@@ -37,7 +37,7 @@ function CompanyFloatingAgentChat({ companyId }: { companyId: string }) {
   const [open, setOpen] = useState(false);
   const [agentId, setAgentId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
-  const [draft, setDraft] = useState("");
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [sending, setSending] = useState(false);
   const [pendingMessage, setPendingMessage] = useState<PendingMessage | null>(null);
   const [autoOpenLastChat, setAutoOpenLastChat] = useState(false);
@@ -58,6 +58,7 @@ function CompanyFloatingAgentChat({ companyId }: { companyId: string }) {
     enabled: open,
   });
   const agent = agents.data?.find((item) => item.id === agentId);
+  const draft = agentId ? drafts[agentId] ?? "" : "";
   const chatKey = queryKeys.agentChats.detail(companyId, userId ?? null, agentId ?? undefined);
   const chat = useQuery({
     queryKey: chatKey,
@@ -114,7 +115,7 @@ function CompanyFloatingAgentChat({ companyId }: { companyId: string }) {
     if (!body || !agentId || sending || chat.isPending || chat.isError) return;
     const requestId = crypto.randomUUID();
     setPendingMessage({ agentId, body, requestId, status: "sending" });
-    setDraft("");
+    setDrafts((current) => ({ ...current, [agentId]: "" }));
     setSending(true);
     setSendError(null);
     try {
@@ -135,7 +136,7 @@ function CompanyFloatingAgentChat({ companyId }: { companyId: string }) {
         if (issueId) void client.invalidateQueries({ queryKey: queryKeys.issues.comments(issueId) });
       } else {
         setPendingMessage((current) => current?.requestId === requestId ? null : current);
-        setDraft((current) => current || body);
+        setDrafts((current) => ({ ...current, [agentId]: current[agentId] || body }));
         setSendError(error instanceof Error ? error.message : "Couldn’t send your message.");
       }
     } finally {
@@ -157,30 +158,72 @@ function CompanyFloatingAgentChat({ companyId }: { companyId: string }) {
       {open && (
         <section
           aria-label={agent ? `Chat with ${agent.name}` : "Agent chats"}
-          className="mb-3 flex h-(--sz-70vh) max-h-(--sz-85dvh) w-full flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-xl sm:w-96"
+          className="mb-3 flex h-(--sz-70vh) max-h-(--sz-85dvh) w-full flex-col overflow-hidden rounded-2xl border border-border bg-background shadow-xl sm:h-(--sz-85dvh) sm:max-h-(--sz-calc-33) sm:w-(--sz-720px) sm:max-w-(--sz-calc-10)"
         >
-          <header className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-3">
-            {agent ? (
-              <Button variant="ghost" size="sm" aria-label="Choose another agent" onClick={() => { setAgentId(null); setSendError(null); }}>
-                <ArrowLeft className="size-4" /> Chats
-              </Button>
-            ) : <MessageCircle aria-hidden className="ml-1 size-5 text-primary" />}
-            <div className="min-w-0 flex-1">
-              <h2 className="truncate text-sm font-semibold">{agent?.name ?? "Chats"}</h2>
-              <p className="truncate text-xs text-muted-foreground">{agent ? (agent.title ?? agent.role) : "Talk directly with an agent"}</p>
-            </div>
-            {agent && (
-              <Button variant="ghost" size="icon-sm" asChild aria-label="Open full conversation">
-                <Link to={`/chats/${encodeURIComponent(agentRouteRef(agent))}`} onClick={() => setOpen(false)}>
-                  <ArrowUpRight className="size-4" />
-                </Link>
-              </Button>
-            )}
-            <Button variant="ghost" size="icon-sm" aria-label="Close chat" onClick={() => setOpen(false)}>
-              <X className="size-4" />
-            </Button>
-          </header>
-
+          <div className="flex min-h-0 flex-1">
+            <aside aria-label="Chat navigation" className={cn("min-h-0 w-full flex-col border-r border-border bg-muted/20 sm:flex sm:w-60 sm:shrink-0", agent ? "hidden" : "flex")}>
+              <header className="flex shrink-0 items-center gap-2 border-b border-border px-4 py-3">
+                <MessageCircle aria-hidden className="size-5 text-primary" />
+                <h2 className="min-w-0 flex-1 text-sm font-semibold">Chats</h2>
+                <Button variant="ghost" size="icon-sm" aria-label="Close chat" onClick={() => setOpen(false)} className="sm:hidden"><X className="size-4" /></Button>
+              </header>
+              <div className="border-b border-border p-3">
+                <Input aria-label="Find an agent" placeholder="Find an agent…" value={search} onChange={(event) => setSearch(event.target.value)} />
+              </div>
+              <div className="min-h-0 flex-1 overflow-y-auto">
+                {!query ? <RecentConversations
+                  companyId={companyId}
+                  userId={userId}
+                  agents={agents.data ?? []}
+                  recentIds={recentIds}
+                  onSelect={(selected) => { setAgentId(selected.id); setSendError(null); recordAgentChatVisit(companyId, userId, selected.id); }}
+                /> : null}
+                <h3 className="px-4 pt-3 pb-1 text-xs font-medium text-muted-foreground">{query ? "Search results" : "All agents"}</h3>
+                {agents.isPending ? <p role="status" className="px-4 py-3 text-sm text-muted-foreground">Loading agents…</p> : null}
+                {agents.isError ? (
+                  <div role="alert" className="space-y-2 px-4 py-3 text-sm text-destructive">
+                    <p>Couldn’t load agents.</p>
+                    <Button variant="outline" size="sm" onClick={() => void agents.refetch()}>Retry</Button>
+                  </div>
+                ) : null}
+                {!agents.isPending && !agents.isError && visibleAgents.length === 0 ? (
+                  <p className="px-4 py-3 text-sm text-muted-foreground">{query ? "No agents match your search." : "No agents yet."}</p>
+                ) : null}
+                {visibleAgents.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    aria-label={`Chat with ${item.name}`}
+                    aria-current={agentId === item.id ? "page" : undefined}
+                    onClick={() => { setAgentId(item.id); setAutoOpenLastChat(false); setSendError(null); recordAgentChatVisit(companyId, userId, item.id); }}
+                    className={cn("flex w-full items-center gap-3 px-4 py-2.5 text-left hover:bg-accent focus-visible:bg-accent focus-visible:outline-none", agentId === item.id && "bg-accent")}
+                  >
+                    <AgentIcon icon={item.icon} className="size-8 shrink-0" />
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-sm font-medium">{item.name}</span>
+                      <span className="block truncate text-xs text-muted-foreground">{item.title ?? item.role}</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+              <div className="shrink-0 border-t border-border px-4 py-3">
+                <Link to="/chats" onClick={() => setOpen(false)} className="text-xs text-muted-foreground hover:text-foreground">See all chats</Link>
+              </div>
+            </aside>
+            <div className={cn("min-w-0 flex-1 flex-col", agent ? "flex" : "hidden sm:flex")}>
+              <header className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-3">
+                {agent ? <Button variant="ghost" size="icon-sm" aria-label="Choose another agent" onClick={() => { setAgentId(null); setSendError(null); }} className="sm:hidden"><ArrowLeft className="size-4" /></Button> : null}
+                <div className="min-w-0 flex-1">
+                  <h2 className="truncate text-sm font-semibold">{agent?.name ?? "Select an agent"}</h2>
+                  <p className="truncate text-xs text-muted-foreground">{agent ? (agent.title ?? agent.role) : "Choose a conversation on the left"}</p>
+                </div>
+                {agent && (
+                  <Button variant="ghost" size="icon-sm" asChild aria-label="Open full conversation">
+                    <Link to={`/chats/${encodeURIComponent(agentRouteRef(agent))}`} onClick={() => setOpen(false)}><ArrowUpRight className="size-4" /></Link>
+                  </Button>
+                )}
+                <Button variant="ghost" size="icon-sm" aria-label="Close chat" onClick={() => setOpen(false)}><X className="size-4" /></Button>
+              </header>
           {agent ? (
             <>
               <div role="log" aria-label="Messages" className="min-h-0 flex-1 space-y-3 overflow-y-auto bg-muted/20 px-4 py-4">
@@ -191,7 +234,7 @@ function CompanyFloatingAgentChat({ companyId }: { companyId: string }) {
                     <Button variant="outline" size="sm" onClick={() => { void chat.refetch(); void comments.refetch(); }}>Retry</Button>
                   </div>
                 ) : null}
-                {!chat.isPending && !chat.isError && !comments.isPending && visibleComments.length === 0 ? (
+                {!chat.isPending && !chat.isError && (!issueId || !comments.isPending) && visibleComments.length === 0 ? (
                   <p className="pt-10 text-center text-sm text-muted-foreground">Say hello to {agent.name}. Your conversation will appear here.</p>
                 ) : null}
                 {visibleComments.map((comment) => {
@@ -231,7 +274,7 @@ function CompanyFloatingAgentChat({ companyId }: { companyId: string }) {
                     placeholder={`Message ${agent.name}…`}
                     rows={2}
                     value={draft}
-                    onChange={(event) => setDraft(event.target.value)}
+                    onChange={(event) => setDrafts((current) => ({ ...current, [agent.id]: event.target.value }))}
                     onKeyDown={(event) => {
                       if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
                         event.preventDefault();
@@ -248,48 +291,12 @@ function CompanyFloatingAgentChat({ companyId }: { companyId: string }) {
               </form>
             </>
           ) : (
-            <>
-              {!query ? <RecentConversations
-                companyId={companyId}
-                userId={userId}
-                agents={agents.data ?? []}
-                recentIds={recentIds}
-                onSelect={(selected) => { setAgentId(selected.id); setDraft(""); setSendError(null); recordAgentChatVisit(companyId, userId, selected.id); }}
-              /> : null}
-              <div className="border-b border-border px-3 py-3">
-                <Input aria-label="Find an agent" placeholder="Find an agent by name or role…" value={search} onChange={(event) => setSearch(event.target.value)} />
-              </div>
-              <div className="min-h-0 flex-1 overflow-y-auto py-1">
-                {agents.isPending ? <p role="status" className="px-4 py-3 text-sm text-muted-foreground">Loading agents…</p> : null}
-                {agents.isError ? (
-                  <div role="alert" className="space-y-2 px-4 py-3 text-sm text-destructive">
-                    <p>Couldn’t load agents.</p>
-                    <Button variant="outline" size="sm" onClick={() => void agents.refetch()}>Retry</Button>
-                  </div>
-                ) : null}
-                {!agents.isPending && !agents.isError && visibleAgents.length === 0 ? (
-                  <p className="px-4 py-3 text-sm text-muted-foreground">{query ? "No agents match your search." : "No agents yet."}</p>
-                ) : null}
-                {visibleAgents.map((item) => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => { setAgentId(item.id); setAutoOpenLastChat(false); setDraft(""); setSendError(null); recordAgentChatVisit(companyId, userId, item.id); }}
-                    className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-accent focus-visible:bg-accent focus-visible:outline-none"
-                  >
-                    <AgentIcon icon={item.icon} className="size-9 shrink-0" />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm font-medium">{item.name}</span>
-                      <span className="block truncate text-xs text-muted-foreground">{item.title ?? item.role}</span>
-                    </span>
-                  </button>
-                ))}
-              </div>
-              <div className="border-t border-border px-4 py-3 text-right">
-                <Link to="/chats" onClick={() => setOpen(false)} className="text-xs text-muted-foreground hover:text-foreground">See all chats</Link>
-              </div>
-            </>
+            <div className="flex min-h-0 flex-1 items-center justify-center px-8 text-center text-sm text-muted-foreground">
+              Choose an agent on the left to start or continue a conversation.
+            </div>
           )}
+            </div>
+          </div>
         </section>
       )}
       <Button

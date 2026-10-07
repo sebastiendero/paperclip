@@ -56,6 +56,13 @@ async function waitForText(text: string) {
   }
   throw new Error(`Timed out waiting for ${text}`);
 }
+async function waitForLogText(text: string) {
+  for (let attempt = 0; attempt < 30; attempt++) {
+    if (container.querySelector('[role="log"]')?.textContent?.includes(text)) return;
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 10)); });
+  }
+  throw new Error(`Timed out waiting for chat message ${text}`);
+}
 
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -123,14 +130,52 @@ describe("FloatingAgentChat", () => {
     serverComments = [comment("older", "Can you review the launch?", "user"), comment("latest", "Yes, I can review it.", "agent")];
     await render();
     await click("Open agent chat");
-    await waitForText("Yes, I can review it.");
+    await waitForLogText("Yes, I can review it.");
     expect(container.querySelector('[role="log"]')?.textContent).toContain("Yes, I can review it.");
+    expect(container.querySelector('aside[aria-label="Chat navigation"]')?.textContent).toContain("Recent conversations");
+    expect(container.querySelector('aside[aria-label="Chat navigation"]')?.textContent).toContain("Yes, I can review it.");
 
     await click("Choose another agent");
     await waitForText("Recent conversations");
     await waitForText("Yes, I can review it.");
     expect(container.textContent).toContain("Recent conversations");
     expect(container.textContent).toContain("Yes, I can review it.");
+  });
+
+  it("keeps the agent list beside the conversation and switches chats inside the wider panel", async () => {
+    serverIssue = issue;
+    serverComments = [comment("first", "Ariane's answer", "agent")];
+    state.get.mockImplementation(async (_companyId: string, id: string) => id === agent.id ? issue : null);
+    await render();
+    await click("Open agent chat");
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    await click("Chat with Ariane");
+    await waitForText("Ariane's answer");
+
+    const panel = container.querySelector<HTMLElement>('section[aria-label="Chat with Ariane"]')!;
+    expect(panel.className).toContain("sm:w-(--sz-720px)");
+    expect(panel.querySelector('aside[aria-label="Chat navigation"]')).not.toBeNull();
+    expect(panel.querySelector('[role="log"]')).not.toBeNull();
+
+    await click("Chat with Bruno");
+    await waitForText("Say hello to Bruno");
+    expect(container.querySelector('section[aria-label="Chat with Bruno"]')).not.toBeNull();
+    expect(state.get).toHaveBeenCalledWith("company-a", "agent-b");
+  });
+
+  it("keeps each agent's unsent draft when switching conversations", async () => {
+    await render();
+    await click("Open agent chat");
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    await click("Chat with Ariane");
+    const input = container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message Ariane"]')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(input, "Draft for Ariane");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await click("Chat with Bruno");
+    await click("Chat with Ariane");
+    expect(container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message Ariane"]')?.value).toBe("Draft for Ariane");
   });
 
   it("shows the sent message immediately while the server confirms it", async () => {

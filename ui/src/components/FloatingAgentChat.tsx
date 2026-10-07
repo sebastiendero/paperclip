@@ -4,6 +4,7 @@ import { ArrowLeft, ArrowUpRight, MessageCircle, Send, X } from "lucide-react";
 import { agentChatsApi } from "@/api/agentChats";
 import { agentsApi } from "@/api/agents";
 import { authApi } from "@/api/auth";
+import { heartbeatsApi } from "@/api/heartbeats";
 import { issuesApi } from "@/api/issues";
 import { AgentIcon } from "@/components/AgentIconPicker";
 import { Button } from "@/components/ui/button";
@@ -14,6 +15,16 @@ import { recordAgentChatVisit, useRecentAgentChats } from "@/lib/recent-agent-ch
 import { queryKeys } from "@/lib/queryKeys";
 import { Link } from "@/lib/router";
 import { agentRouteRef, cn } from "@/lib/utils";
+import { CommentSubmissionUnknownError } from "@/lib/comment-submit-result";
+import type { Agent, IssueComment } from "@paperclipai/shared";
+
+interface PendingMessage {
+  agentId: string;
+  body: string;
+  requestId: string;
+  confirmedId?: string;
+  status: "sending" | "confirmed" | "unconfirmed";
+}
 
 export function FloatingAgentChat() {
   const { selectedCompanyId } = useCompany();
@@ -28,6 +39,8 @@ function CompanyFloatingAgentChat({ companyId }: { companyId: string }) {
   const [search, setSearch] = useState("");
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
+  const [pendingMessage, setPendingMessage] = useState<PendingMessage | null>(null);
+  const [autoOpenLastChat, setAutoOpenLastChat] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -35,7 +48,7 @@ function CompanyFloatingAgentChat({ companyId }: { companyId: string }) {
   const session = useQuery({
     queryKey: queryKeys.auth.session,
     queryFn: () => authApi.getSession(),
-    enabled: open,
+    enabled: true,
   });
   const userId = session.data?.user?.id ?? session.data?.session?.userId;
   const recentIds = useRecentAgentChats(companyId, userId);
@@ -53,6 +66,12 @@ function CompanyFloatingAgentChat({ companyId }: { companyId: string }) {
     refetchInterval: open && agentId ? 5000 : false,
   });
   const issueId = chat.data?.id;
+  const liveRuns = useQuery({
+    queryKey: queryKeys.issues.liveRuns(issueId!),
+    queryFn: () => heartbeatsApi.liveRunsForIssue(issueId!),
+    enabled: open && !!issueId,
+    refetchInterval: open && issueId ? 2000 : false,
+  });
   const comments = useQuery({
     queryKey: queryKeys.issues.comments(issueId!),
     queryFn: () => issuesApi.listComments(issueId!, { order: "desc", limit: 100 }),
@@ -61,13 +80,25 @@ function CompanyFloatingAgentChat({ companyId }: { companyId: string }) {
   });
   const visibleComments = [...(comments.data ?? [])].reverse().filter((comment) => !comment.deletedAt);
   const lastComment = visibleComments.at(-1);
+  const pendingForAgent = pendingMessage?.agentId === agentId && !visibleComments.some(
+    (comment) => comment.id === pendingMessage.confirmedId || comment.clientRequestId === pendingMessage.requestId,
+  ) ? pendingMessage : null;
+  const awaitingReply = !!(pendingForAgent && pendingForAgent.status !== "unconfirmed") || !!(lastComment && !lastComment.authorAgentId && !lastComment.derivedAuthorAgentId && lastComment.authorType !== "agent");
+  const activeRun = awaitingReply ? liveRuns.data?.find((run) => run.agentId === agentId) : undefined;
+
+  useEffect(() => {
+    if (!open || !autoOpenLastChat || !session.isFetched || !agents.data) return;
+    const mostRecent = recentIds.find((id) => agents.data.some((item) => item.id === id));
+    setAgentId(mostRecent ?? null);
+    setAutoOpenLastChat(false);
+  }, [open, autoOpenLastChat, session.isFetched, agents.data, recentIds]);
 
   useEffect(() => {
     if (open && agentId) inputRef.current?.focus();
   }, [open, agentId]);
   useEffect(() => {
     if (open && agentId) messagesEndRef.current?.scrollIntoView({ block: "end" });
-  }, [open, agentId, visibleComments.length]);
+  }, [open, agentId, visibleComments.length, pendingForAgent?.requestId, activeRun?.currentStatusMessage]);
   useEffect(() => {
     if (!open) return;
     const closeOnEscape = (event: KeyboardEvent) => {
@@ -81,20 +112,32 @@ function CompanyFloatingAgentChat({ companyId }: { companyId: string }) {
     event?.preventDefault();
     const body = draft.trim();
     if (!body || !agentId || sending || chat.isPending || chat.isError) return;
+    const requestId = crypto.randomUUID();
+    setPendingMessage({ agentId, body, requestId, status: "sending" });
+    setDraft("");
     setSending(true);
     setSendError(null);
     try {
       const issue = chat.data ?? await agentChatsApi.ensure(companyId, agentId);
       client.setQueryData(chatKey, issue);
-      await issuesApi.addComment(issue.id, body, undefined, undefined, undefined, crypto.randomUUID());
-      setDraft("");
+      const confirmed = await issuesApi.addComment(issue.id, body, undefined, undefined, undefined, requestId);
+      setPendingMessage((current) => current?.requestId === requestId ? { ...current, confirmedId: confirmed.id, status: "confirmed" } : current);
       await Promise.all([
         client.invalidateQueries({ queryKey: queryKeys.issues.comments(issue.id) }),
         client.invalidateQueries({ queryKey: chatKey }),
+        client.invalidateQueries({ queryKey: ["agent-chat", "recent-previews", companyId] }),
       ]);
       inputRef.current?.focus();
     } catch (error) {
-      setSendError(error instanceof Error ? error.message : "Couldn’t send your message.");
+      if (error instanceof CommentSubmissionUnknownError) {
+        setPendingMessage((current) => current?.requestId === requestId ? { ...current, status: "unconfirmed" } : current);
+        setSendError("Message delivery could not be confirmed. Check the conversation before sending it again.");
+        if (issueId) void client.invalidateQueries({ queryKey: queryKeys.issues.comments(issueId) });
+      } else {
+        setPendingMessage((current) => current?.requestId === requestId ? null : current);
+        setDraft((current) => current || body);
+        setSendError(error instanceof Error ? error.message : "Couldn’t send your message.");
+      }
     } finally {
       setSending(false);
     }
@@ -118,8 +161,8 @@ function CompanyFloatingAgentChat({ companyId }: { companyId: string }) {
         >
           <header className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-3">
             {agent ? (
-              <Button variant="ghost" size="icon-sm" aria-label="Choose another agent" onClick={() => { setAgentId(null); setSendError(null); }}>
-                <ArrowLeft className="size-4" />
+              <Button variant="ghost" size="sm" aria-label="Choose another agent" onClick={() => { setAgentId(null); setSendError(null); }}>
+                <ArrowLeft className="size-4" /> Chats
               </Button>
             ) : <MessageCircle aria-hidden className="ml-1 size-5 text-primary" />}
             <div className="min-w-0 flex-1">
@@ -161,7 +204,20 @@ function CompanyFloatingAgentChat({ companyId }: { companyId: string }) {
                     </div>
                   );
                 })}
-                {lastComment && !lastComment.authorAgentId && !lastComment.derivedAuthorAgentId && lastComment.authorType !== "agent" ? (
+                {pendingForAgent ? (
+                  <div className="flex justify-end">
+                    <div className="max-w-(--pct-90) whitespace-pre-wrap break-words rounded-2xl rounded-br-sm bg-primary px-3 py-2 text-sm leading-relaxed text-primary-foreground opacity-70">
+                      {pendingForAgent.body}
+                      <span className="mt-1 block text-xs">{pendingForAgent.status === "sending" ? "Sending…" : pendingForAgent.status === "unconfirmed" ? "Delivery unconfirmed" : "Sent"}</span>
+                    </div>
+                  </div>
+                ) : null}
+                {activeRun ? (
+                  <div role="status" className="flex items-start gap-2 text-xs text-muted-foreground">
+                    <span aria-hidden className="mt-1 size-2 shrink-0 animate-pulse rounded-full bg-primary" />
+                    <span><span className="block font-medium text-foreground">{agent.name} is replying…</span>{activeRun.currentStatusMessage || activeRun.lastAssistantSnippet ? <span className="block">{activeRun.currentStatusMessage ?? activeRun.lastAssistantSnippet}</span> : null}</span>
+                  </div>
+                ) : awaitingReply ? (
                   <p role="status" className="text-xs text-muted-foreground">Waiting for {agent.name} to reply…</p>
                 ) : null}
                 <div ref={messagesEndRef} />
@@ -193,6 +249,13 @@ function CompanyFloatingAgentChat({ companyId }: { companyId: string }) {
             </>
           ) : (
             <>
+              {!query ? <RecentConversations
+                companyId={companyId}
+                userId={userId}
+                agents={agents.data ?? []}
+                recentIds={recentIds}
+                onSelect={(selected) => { setAgentId(selected.id); setDraft(""); setSendError(null); recordAgentChatVisit(companyId, userId, selected.id); }}
+              /> : null}
               <div className="border-b border-border px-3 py-3">
                 <Input aria-label="Find an agent" placeholder="Find an agent by name or role…" value={search} onChange={(event) => setSearch(event.target.value)} />
               </div>
@@ -211,7 +274,7 @@ function CompanyFloatingAgentChat({ companyId }: { companyId: string }) {
                   <button
                     key={item.id}
                     type="button"
-                    onClick={() => { setAgentId(item.id); setDraft(""); setSendError(null); recordAgentChatVisit(companyId, userId, item.id); }}
+                    onClick={() => { setAgentId(item.id); setAutoOpenLastChat(false); setDraft(""); setSendError(null); recordAgentChatVisit(companyId, userId, item.id); }}
                     className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-accent focus-visible:bg-accent focus-visible:outline-none"
                   >
                     <AgentIcon icon={item.icon} className="size-9 shrink-0" />
@@ -234,12 +297,61 @@ function CompanyFloatingAgentChat({ companyId }: { companyId: string }) {
         size="lg"
         aria-label={open ? "Close agent chat" : "Open agent chat"}
         aria-expanded={open}
-        onClick={() => setOpen((current) => !current)}
+        onClick={() => {
+          if (!open && !agentId) setAutoOpenLastChat(true);
+          if (open) setAutoOpenLastChat(false);
+          setOpen((current) => !current);
+        }}
         className="h-12 rounded-full px-4 shadow-lg"
       >
         <MessageCircle className="size-5" />
         <span>Chats</span>
       </Button>
+    </div>
+  );
+}
+
+function RecentConversations({ companyId, userId, agents, recentIds, onSelect }: {
+  companyId: string;
+  userId?: string;
+  agents: Agent[];
+  recentIds: string[];
+  onSelect: (agent: Agent) => void;
+}) {
+  const recentAgents = recentIds.slice(0, 12).flatMap((id) => agents.filter((agent) => agent.id === id));
+  const previews = useQuery({
+    queryKey: ["agent-chat", "recent-previews", companyId, userId, ...recentAgents.map((agent) => agent.id)],
+    queryFn: async () => {
+      const results = await Promise.allSettled(recentAgents.map(async (agent) => {
+        const conversation = await agentChatsApi.get(companyId, agent.id);
+        if (!conversation) return null;
+        const latest = await issuesApi.listComments(conversation.id, { order: "desc", limit: 1 });
+        return { agent, last: latest[0] ?? null };
+      }));
+      return {
+        rows: results.flatMap((result) => result.status === "fulfilled" && result.value ? [result.value] : []),
+        failed: results.some((result) => result.status === "rejected"),
+      };
+    },
+    enabled: recentAgents.length > 0,
+    staleTime: 10_000,
+  });
+  const conversations = previews.data?.rows ?? [];
+  if (recentAgents.length === 0) return null;
+  return (
+    <div className="max-h-48 shrink-0 overflow-y-auto border-b border-border py-2">
+      <h3 className="px-4 pb-1 text-xs font-medium text-muted-foreground">Recent conversations</h3>
+      {previews.isPending ? <p role="status" className="px-4 py-2 text-xs text-muted-foreground">Loading recent chats…</p> : null}
+      {previews.isError || previews.data?.failed ? <p role="alert" className="px-4 py-2 text-xs text-destructive">Some recent chats couldn’t be loaded.</p> : null}
+      {conversations.map(({ agent, last }) => (
+        <button key={agent.id} type="button" onClick={() => onSelect(agent)} className="flex w-full items-center gap-3 px-4 py-2 text-left hover:bg-accent focus-visible:bg-accent focus-visible:outline-none">
+          <AgentIcon icon={agent.icon} className="size-8 shrink-0" />
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-sm font-medium">{agent.name}</span>
+            <span className="block truncate text-xs text-muted-foreground">{last ? `${last.authorAgentId || last.derivedAuthorAgentId || last.authorType === "agent" ? "" : "You: "}${last.body}` : "Conversation started"}</span>
+          </span>
+        </button>
+      ))}
     </div>
   );
 }

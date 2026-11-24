@@ -239,6 +239,28 @@ describeEmbeddedPostgres("routine service live-execution coalescing", () => {
     return { companyId, agentId, issueSvc, projectId, routine, svc, wakeups };
   }
 
+  it("refuses a routine description carrying a forbidden term on create and update", async () => {
+    const { enableForbiddenTermsForTest, expectForbiddenTermRejection, FORBIDDEN_TEST_TEXT } = await import("./helpers/forbidden-terms.js");
+    const f = await seedFixture();
+    const restore = enableForbiddenTermsForTest();
+    try {
+      await expectForbiddenTermRejection(f.svc.create(f.companyId, {
+        title: "Supplier digest", description: FORBIDDEN_TEST_TEXT, assigneeAgentId: f.agentId,
+        priority: "medium", status: "active", concurrencyPolicy: "coalesce_if_active", catchUpPolicy: "skip_missed", variables: [],
+      }, {}));
+      await expectForbiddenTermRejection(f.svc.update(f.routine.id, { description: FORBIDDEN_TEST_TEXT }, {}));
+      // An edit that leaves the description untouched is not blocked.
+      const renamed = await f.svc.update(f.routine.id, { title: "ascii frog renamed" }, {});
+      expect(renamed?.title).toBe("ascii frog renamed");
+    } finally {
+      restore();
+    }
+    const detail = await f.svc.getDetail(f.routine.id);
+    expect(detail?.description).toBe("Run the frog routine");
+    expect((await db.select().from(routines).where(eq(routines.companyId, f.companyId))).map((row) => row.title))
+      .toEqual(["ascii frog renamed"]);
+  });
+
   it("preserves creation ancestry through regular webhooks, child tasks, and standalone follow-ups", async () => {
     vi.stubEnv("PAPERCLIP_AGENT_JWT_SECRET", randomUUID().repeat(2));
     const f = await seedFixture();

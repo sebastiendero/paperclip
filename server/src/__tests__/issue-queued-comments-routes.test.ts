@@ -1361,6 +1361,33 @@ describeEmbeddedPostgres("issue queued-comment routes", () => {
     expect(stale.body.details?.code).toBe("queued_comment_revision_conflict");
   });
 
+  it("refuses a queued comment edit carrying a forbidden term and keeps the stored body", async () => {
+    const { enableForbiddenTermsForTest, expectForbiddenTermResponse, FORBIDDEN_TEST_TEXT } = await import("./helpers/forbidden-terms.js");
+    const seeded = await seedQueue();
+    const initial = await request(app(seeded.companyId))
+      .get(`/api/issues/${seeded.issueId}/queued-comments`);
+    expect(initial.status, JSON.stringify(initial.body)).toBe(200);
+    const before = await db.select({ body: issueComments.body })
+      .from(issueComments)
+      .where(eq(issueComments.id, seeded.commentIds[0]!))
+      .then((rows) => rows[0]);
+
+    const restore = enableForbiddenTermsForTest();
+    try {
+      const refused = await request(app(seeded.companyId))
+        .patch(`/api/issues/${seeded.issueId}/queued-comments/${seeded.commentIds[0]}`)
+        .send({ queueId: seeded.wakeId, revision: initial.body.revision, body: FORBIDDEN_TEST_TEXT });
+      expectForbiddenTermResponse(refused);
+    } finally {
+      restore();
+    }
+    const after = await db.select({ body: issueComments.body })
+      .from(issueComments)
+      .where(eq(issueComments.id, seeded.commentIds[0]!))
+      .then((rows) => rows[0]);
+    expect(after?.body).toBe(before?.body);
+  });
+
   it("writes one activity log row for each successful queue mutation, and none for a rejected one", async () => {
     const seeded = await seedQueue();
     const initial = await request(app(seeded.companyId))

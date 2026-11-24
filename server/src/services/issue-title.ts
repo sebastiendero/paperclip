@@ -6,6 +6,7 @@ import { setIssueTitleSchema, type SetIssueTitle } from "@paperclipai/shared";
 import { badRequest, conflict, forbidden, notFound } from "../errors.js";
 import { persistActivity, type ActivityPublication, type LogActivityInput } from "./activity-log.js";
 import { issueReferenceService } from "./issue-references.js";
+import { assertNoForbiddenTerms } from "./forbidden-terms.js";
 
 type TitleActor = Pick<LogActivityInput, "actorType" | "actorId" | "agentId" | "runId" | "agentApiKeyId">;
 type TitleResult = { id: string; title: string; titleNeedsGeneration: boolean; changed: boolean };
@@ -26,6 +27,14 @@ export async function setIssueTitle(
   options?: { receiptOnly: true },
 ): Promise<TitleMutationResult | null> {
   const { title, onlyIfProvisional, idempotencyKey } = setIssueTitleSchema.parse(input);
+  // Agents name their task here without going through issueService.update.
+  assertNoForbiddenTerms([{ field: "title", text: title }], {
+    surface: "issue_title",
+    issueId,
+    companyId,
+    authorAgentId: actor.agentId ?? null,
+    authorUserId: actor.actorType === "user" ? actor.actorId : null,
+  });
   const predicate = and(eq(issues.id, issueId), eq(issues.companyId, companyId));
   const [issue] = await tx.select().from(issues).where(predicate).for("update");
   if (!issue) throw notFound("Task not found");

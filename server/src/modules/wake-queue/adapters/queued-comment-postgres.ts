@@ -20,6 +20,7 @@ import {
   withQueuedCommentIdsInWakePayload,
 } from "../../../services/issue-queued-comment-queue.js";
 import { logActivity as persistActivityLogRow, type ActivityPublication } from "../../../services/activity-log.js";
+import { assertNoForbiddenTerms } from "../../../services/forbidden-terms.js";
 import { decideQueuedCommentWakeLookup } from "../domain/policy.js";
 import { firstTurnClaimedCommentIds } from "../../../services/native-runtime/first-turn-queued-input.js";
 import { parseObject, readNonEmptyString } from "../domain/values.js";
@@ -63,6 +64,12 @@ function buildTransaction(tx: Db, companyId: string, issueId: string, deps: Queu
   let heldByFirstTurn: string[] = [];
   return {
     async updateCommentBody({ issueId, commentId, body, updatedAt }) {
+      // Comment edits bypass insertIssueComment; this is their only write.
+      assertNoForbiddenTerms([{ field: "body", text: body }], {
+        surface: "issue_queued_comment_edit",
+        issueId,
+        companyId,
+      });
       await notifyStatusCardIssueChange(tx, companyId);
       const updated = await tx
         .update(issueComments)

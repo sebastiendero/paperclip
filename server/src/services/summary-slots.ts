@@ -1,5 +1,6 @@
 import { and, desc, eq, gte, inArray, isNull } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
+import { assertNoForbiddenTerms } from "./forbidden-terms.js";
 import {
   documentRevisions,
   documents,
@@ -621,6 +622,14 @@ export function summarySlotService(db: Db) {
     await assertTargetVisible(sel);
     const slotRow = await findSlotRow(sel);
     await assertSummarizerWriter(sel, slotRow, input, actor);
+    assertNoForbiddenTerms(
+      [
+        { field: "title", text: input.title },
+        { field: "markdown", text: input.markdown },
+        { field: "changeSummary", text: input.changeSummary },
+      ],
+      { surface: "summary_slot", companyId: sel.companyId, authorAgentId: actor.agentId ?? null },
+    );
 
     const now = new Date();
     const result = await db.transaction(async (tx) => {

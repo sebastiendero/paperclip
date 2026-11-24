@@ -836,6 +836,70 @@ describeEmbeddedPostgres("cases routes", () => {
     });
   });
 
+  it("refuses case document writes, restores and annotations carrying a forbidden term", async () => {
+    const { enableForbiddenTermsForTest, expectForbiddenTermResponse, FORBIDDEN_TEST_TEXT } = await import("./helpers/forbidden-terms.js");
+    await enableCases();
+    const company = await seedCompany("FTC");
+    const http = request(app(boardActor));
+    const created = await http
+      .post(`/api/companies/${company.id}/cases`)
+      .send({ caseType: "brief", title: "Forbidden terms case" })
+      .expect(201);
+    // Written before the filter is enabled, as a pre-existing revision would be.
+    const first = await http
+      .put(`/api/cases/${created.body.id}/documents/body`)
+      .send({ body: `Written earlier: ${FORBIDDEN_TEST_TEXT}` })
+      .expect(200);
+    const second = await http
+      .put(`/api/cases/${created.body.id}/documents/body`)
+      .send({ body: "Alpha selected text omega", baseRevisionId: first.body.revision.id })
+      .expect(200);
+    const thread = await http
+      .post(`/api/cases/${created.body.id}/documents/body/annotations`)
+      .send({
+        baseRevisionId: second.body.revision.id,
+        baseRevisionNumber: second.body.revision.revisionNumber,
+        selector: {
+          quote: { exact: "selected", prefix: "Alpha ", suffix: " text" },
+          position: { normalizedStart: 6, normalizedEnd: 14, markdownStart: 6, markdownEnd: 14 },
+        },
+        body: "Clarify with person P1.",
+      })
+      .expect(201);
+
+    const restore = enableForbiddenTermsForTest();
+    try {
+      expectForbiddenTermResponse(await http
+        .put(`/api/cases/${created.body.id}/documents/body`)
+        .send({ body: FORBIDDEN_TEST_TEXT, baseRevisionId: second.body.revision.id }));
+      expectForbiddenTermResponse(await http
+        .put(`/api/cases/${created.body.id}/documents/notes`)
+        .send({ title: FORBIDDEN_TEST_TEXT, body: "clean" }));
+      expectForbiddenTermResponse(await http
+        .post(`/api/cases/${created.body.id}/documents/body/revisions/${first.body.revision.id}/restore`)
+        .send({}));
+      expectForbiddenTermResponse(await http
+        .post(`/api/cases/${created.body.id}/documents/body/annotations`)
+        .send({
+          baseRevisionId: second.body.revision.id,
+          baseRevisionNumber: second.body.revision.revisionNumber,
+          selector: {
+            quote: { exact: "selected", prefix: "Alpha ", suffix: " text" },
+            position: { normalizedStart: 6, normalizedEnd: 14, markdownStart: 6, markdownEnd: 14 },
+          },
+          body: FORBIDDEN_TEST_TEXT,
+        }));
+      expectForbiddenTermResponse(await http
+        .post(`/api/cases/${created.body.id}/documents/body/annotations/${thread.body.id}/comments`)
+        .send({ body: FORBIDDEN_TEST_TEXT }));
+    } finally {
+      restore();
+    }
+    const current = await http.get(`/api/cases/${created.body.id}/documents/body`).expect(200);
+    expect(current.body.body).toBe("Alpha selected text omega");
+    expect(current.body.latestRevisionNumber).toBe(2);
+  });
+
   it("creates, replies to, resolves, reopens, and remaps case document annotations", async () => {
     await enableCases();
     const company = await seedCompany("ANN");

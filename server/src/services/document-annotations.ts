@@ -23,6 +23,7 @@ import {
   UpdateDocumentAnnotationThread,
 } from "@paperclipai/shared";
 import { conflict, notFound, unprocessable } from "../errors.js";
+import { assertNoForbiddenTerms } from "./forbidden-terms.js";
 
 type ActorInput = {
   actorType: "agent" | "user";
@@ -414,6 +415,12 @@ export function documentAnnotationService(db: Db) {
       input: CreateDocumentAnnotationThread,
       actor: ActorInput,
     ) => db.transaction(async (tx) => {
+      assertNoForbiddenTerms([{ field: "body", text: input.body }], {
+        surface: "issue_document_annotation",
+        issueId,
+        authorAgentId: actor.agentId ?? null,
+        authorUserId: actor.userId ?? null,
+      });
       await tx.execute(sql`
         select ${documents.id}
         from ${issueDocuments}
@@ -501,6 +508,11 @@ export function documentAnnotationService(db: Db) {
       input: CreateDocumentAnnotationThread,
       actor: ActorInput,
     ) => db.transaction(async (tx) => {
+      assertNoForbiddenTerms([{ field: "body", text: input.body }], {
+        surface: "routine_document_annotation",
+        authorAgentId: actor.agentId ?? null,
+        authorUserId: actor.userId ?? null,
+      });
       await tx.execute(sql`
         select ${documents.id}
         from ${routineDocuments}
@@ -589,6 +601,11 @@ export function documentAnnotationService(db: Db) {
       input: CreateDocumentAnnotationThread,
       actor: ActorInput,
     ) => db.transaction(async (tx) => {
+      assertNoForbiddenTerms([{ field: "body", text: input.body }], {
+        surface: "case_document_annotation",
+        authorAgentId: actor.agentId ?? null,
+        authorUserId: actor.userId ?? null,
+      });
       await tx.execute(sql`
         select ${documents.id}
         from ${caseDocuments}
@@ -680,6 +697,12 @@ export function documentAnnotationService(db: Db) {
       input: CreateDocumentAnnotationComment,
       actor: ActorInput,
     ) => db.transaction(async (tx) => {
+      assertNoForbiddenTerms([{ field: "body", text: input.body }], {
+        surface: "issue_document_annotation",
+        issueId,
+        authorAgentId: actor.agentId ?? null,
+        authorUserId: actor.userId ?? null,
+      });
       const thread = await getThreadForIssue(issueId, key, threadId, tx);
       if (!thread) throw notFound("Annotation thread not found");
       const now = new Date();
@@ -715,6 +738,11 @@ export function documentAnnotationService(db: Db) {
       input: CreateDocumentAnnotationComment,
       actor: ActorInput,
     ) => db.transaction(async (tx) => {
+      assertNoForbiddenTerms([{ field: "body", text: input.body }], {
+        surface: "routine_document_annotation",
+        authorAgentId: actor.agentId ?? null,
+        authorUserId: actor.userId ?? null,
+      });
       const doc = await getRoutineDocument(routineId, key, tx);
       if (!doc) throw notFound("Document not found");
       const thread = await getThreadForRoutine(routineId, key, threadId, doc.companyId, doc.documentId, tx);
@@ -752,6 +780,11 @@ export function documentAnnotationService(db: Db) {
       input: CreateDocumentAnnotationComment,
       actor: ActorInput,
     ) => db.transaction(async (tx) => {
+      assertNoForbiddenTerms([{ field: "body", text: input.body }], {
+        surface: "case_document_annotation",
+        authorAgentId: actor.agentId ?? null,
+        authorUserId: actor.userId ?? null,
+      });
       const doc = await getCaseDocument(caseId, key, tx);
       if (!doc) throw notFound("Document not found");
       const thread = await getThreadForCase(caseId, key, threadId, doc.companyId, doc.documentId, tx);

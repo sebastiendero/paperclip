@@ -31,6 +31,7 @@ import { companySearchService } from "./company-search.js";
 import { executeIssuePostCommitActions, issueService, type IssuePostCommitAction } from "./issues.js";
 import { publishActivity, type ActivityPublication } from "./activity-log.js";
 import { SUMMARIZER_BUILT_IN_KEY } from "./summary-slots.js";
+import { assertNoForbiddenTerms } from "./forbidden-terms.js";
 import {
   buildStatusCardFingerprint,
   chooseStatusCardUpdateKind,
@@ -943,6 +944,14 @@ export function statusCardService(
     if (!card) throw notFound("Status card not found");
     if (card.archivedAt) throw unprocessable("Archived status cards cannot accept summaries");
     await assertSummarizerWriter(card, input.generationIssueId, actor);
+    assertNoForbiddenTerms(
+      [
+        { field: "title", text: input.title ?? card.title },
+        { field: "markdown", text: input.markdown },
+        { field: "changeSummary", text: input.changeSummary },
+      ],
+      { surface: "status_card_summary", companyId: card.companyId, authorAgentId: actor.agentId },
+    );
     if (card.queries.length === 0) throw conflict("Compile the status-card query before writing its summary");
     const now = new Date();
     return mutate(card.companyId, async (tx) => {

@@ -3,6 +3,7 @@ import { notifyApprovalWork } from "./approval-work-notifications.js";
 import { notifyDecisionTargetIssueRemoval } from "./decision-targets.js";
 import { DELIVERY_QUEUES, notifyDeliveryWork } from "./delivery-work-notifications.js";
 import { verifyAppWebhook } from "./app-webhook.js";
+import { assertNoForbiddenTerms } from "./forbidden-terms.js";
 import { authenticateWebhookCreationRun, validateCreationRun } from "./task-creation-provenance.js";
 import crypto from "node:crypto";
 import { verifyFirefliesWebhook } from "./fireflies-webhook.js";
@@ -845,6 +846,22 @@ export function routineService(
     const now = new Date();
     const body = routine.description ?? "";
     const existing = await getRoutineDescriptionDocument(routine.id, executor);
+    // Checked after the unchanged-body shortcut so an untouched description
+    // does not block unrelated routine edits.
+    if (!existing || existing.body !== body) {
+      assertNoForbiddenTerms(
+        [
+          { field: "description", text: body },
+          { field: "changeSummary", text: options.changeSummary },
+        ],
+        {
+          surface: "routine_description_document",
+          companyId: routine.companyId,
+          authorAgentId: actor.agentId ?? null,
+          authorUserId: actor.userId ?? null,
+        },
+      );
+    }
 
     if (existing) {
       if (existing.body === body) return existing;
@@ -2208,6 +2225,14 @@ export function routineService(
     getDescriptionDocument: async (routineId: string) => getRoutineDescriptionDocument(routineId),
 
     create: async (companyId: string, input: CreateRoutine, actor: Actor): Promise<Routine> => {
+      // Refuse before any transaction opens; upsertRoutineDescriptionDocument
+      // checks again for every other path that republishes the description.
+      assertNoForbiddenTerms([{ field: "description", text: input.description }], {
+        surface: "routine_description_document",
+        companyId,
+        authorAgentId: actor.agentId ?? null,
+        authorUserId: actor.userId ?? null,
+      });
       await assertProject(companyId, input.projectId ?? null);
       await assertRoutineFolder(companyId, input.folderId ?? null);
       await assertAssignableAgent(db, companyId, input.assigneeAgentId ?? null, { kind: "routine" });
@@ -2282,6 +2307,16 @@ export function routineService(
     update: async (id: string, patch: UpdateRoutine, actor: Actor): Promise<(Routine & { previousResponsibleUserId: string | null }) | null> => {
       const existing = await getRoutineById(id);
       if (!existing) return null;
+      // Only a changed description is checked, so a form resubmitting an old
+      // description does not block unrelated edits.
+      if (patch.description !== existing.description) {
+        assertNoForbiddenTerms([{ field: "description", text: patch.description }], {
+          surface: "routine_description_document",
+          companyId: existing.companyId,
+          authorAgentId: actor.agentId ?? null,
+          authorUserId: actor.userId ?? null,
+        });
+      }
       const nextProjectId = patch.projectId === undefined ? existing.projectId : patch.projectId;
       const nextFolderId = patch.folderId === undefined ? existing.folderId : patch.folderId;
       const nextAssigneeAgentId = patch.assigneeAgentId === undefined ? existing.assigneeAgentId : patch.assigneeAgentId;

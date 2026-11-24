@@ -61,6 +61,7 @@ import type { IssueBlockerAttention } from "@paperclipai/shared";
 import { listCaseTaskDocuments } from "../services/case-task-documents.js";
 import { authorizeCaseCreation, authorizeCaseMutation } from "../services/case-mutation-authorization.js";
 import { logger } from "../middleware/logger.js";
+import { assertNoForbiddenTerms } from "../services/forbidden-terms.js";
 import { assertCompanyAccess, getActorInfo, hasCompanyAccess } from "./authz.js";
 
 type CaseRouteTransaction = Parameters<Parameters<Db["transaction"]>[0]>[0];
@@ -1025,6 +1026,19 @@ export function caseRoutes(db: Db, storage: StorageService) {
     const body = upsertCaseDocumentSchema.parse(req.body);
 
     const result = await mutateCase(req, caseRow, async (tx) => {
+      assertNoForbiddenTerms(
+        [
+          { field: "title", text: body.title },
+          { field: "body", text: body.body },
+          { field: "changeSummary", text: body.changeSummary },
+        ],
+        {
+          surface: "case_document",
+          companyId: caseRow.companyId,
+          authorAgentId: actor.agentId ?? null,
+          authorUserId: actor.actorType === "user" ? actor.actorId : null,
+        },
+      );
       await lockCaseDocumentKey(tx, { companyId: caseRow.companyId, caseId: caseRow.id, key });
       const existing = await tx
         .select({ link: caseDocuments, document: documents, revision: documentRevisions })
@@ -1235,6 +1249,19 @@ export function caseRoutes(db: Db, storage: StorageService) {
         .limit(1)
         .then((rows) => rows[0] ?? null);
       if (!sourceRevision) throw notFound("Case document revision not found");
+      // Restoring republishes old text, which may predate the filter.
+      assertNoForbiddenTerms(
+        [
+          { field: "title", text: sourceRevision.title },
+          { field: "body", text: sourceRevision.body },
+        ],
+        {
+          surface: "case_document_restore",
+          companyId: caseRow.companyId,
+          authorAgentId: actor.agentId ?? null,
+          authorUserId: actor.actorType === "user" ? actor.actorId : null,
+        },
+      );
       if (existing.document.latestRevisionId === sourceRevision.id) {
         throw conflict("Selected revision is already the latest revision", {
           currentRevisionId: existing.document.latestRevisionId,

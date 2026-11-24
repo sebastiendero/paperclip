@@ -199,6 +199,7 @@ import { getTelemetryClient } from "../telemetry.js";
 import { isUniqueViolation } from "../db-errors.js";
 import type { StorageService } from "../storage/types.js";
 import { validate, validateIssueMutationBody } from "../middleware/validate.js";
+import { assertNoForbiddenTerms } from "../services/forbidden-terms.js";
 import * as serviceIndex from "../services/index.js";
 import { conversationDecisionReceiptsService } from "../services/conversation-decision-receipts.js";
 import {
@@ -14489,6 +14490,22 @@ export function issueRoutes(
         onBehalfOfUserId: _requestedOnBehalfOfUserId,
         ...updateFields
       } = req.body;
+      // The services check each field too; checking the whole PATCH up front
+      // keeps it all-or-nothing when the comment is added after the update.
+      assertNoForbiddenTerms(
+        [
+          { field: "title", text: req.body.title },
+          { field: "description", text: req.body.description },
+          { field: "comment", text: commentBody },
+        ],
+        {
+          surface: "issue_patch",
+          issueId: existing.id,
+          companyId: existing.companyId,
+          authorAgentId: actor.agentId ?? null,
+          authorUserId: actor.actorType === "user" ? actor.actorId : null,
+        },
+      );
       // Board users move tasks to any depth. An agent move into a child is
       // placed beside it, and an agent move of a task with children is skipped,
       // both with a notice instead of an error.

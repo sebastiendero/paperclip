@@ -454,6 +454,29 @@ describeEmbeddedPostgres("summary slot service", () => {
       return { svc, generationIssueId: generated.generatingIssue.id, runId };
     }
 
+    it("refuses a summary carrying a forbidden term and keeps the slot without a document", async () => {
+      const { enableForbiddenTermsForTest, expectForbiddenTermRejection, FORBIDDEN_TEST_TEXT } = await import("./helpers/forbidden-terms.js");
+      const companyId = await seedCompany();
+      const projectId = await seedProject(companyId);
+      const summarizerAgentId = await seedSummarizer(companyId);
+      const { svc, generationIssueId, runId } = await startGeneration(companyId, projectId, summarizerAgentId);
+
+      const restore = enableForbiddenTermsForTest();
+      try {
+        for (const fields of [{ markdown: FORBIDDEN_TEST_TEXT }, { markdown: "Clean summary.", title: FORBIDDEN_TEST_TEXT }]) {
+          await expectForbiddenTermRejection(svc.write(
+            { ...projectSelector(companyId, projectId), ...fields, model: "cheap-model", generationIssueId },
+            { agentId: summarizerAgentId, runId },
+          ));
+        }
+      } finally {
+        restore();
+      }
+      const state = await svc.getSlot(projectSelector(companyId, projectId));
+      expect(state.slot?.documentId ?? null).toBeNull();
+      expect(state.slot?.generatingIssueId).toBe(generationIssueId);
+    });
+
     it("writes a board-readable revision, preserves the previous revision, and clears the generating state", async () => {
       const companyId = await seedCompany();
       const projectId = await seedProject(companyId);

@@ -272,6 +272,7 @@ import { buildIssueChanges } from "./issue-change-receipt.js";
 import { ensurePersonalPrivateProject } from "./projects.js";
 import { projectSafeChatPublication } from "./chat-publication-projection.js";
 import { issueThreadInteractionAttentionAgentAllowed } from "./issue-thread-interaction-resolution.js";
+import { assertNoForbiddenTerms } from "./forbidden-terms.js";
 
 const ALL_ISSUE_STATUSES = [
   "backlog",
@@ -10799,6 +10800,21 @@ export function issueService(db: Db) {
         await notifyStatusCardIssueChange(tx, companyId);
         await notifyIssueAttentionRetentionWork(tx, { companyId, issueId: values.id, parentId: values.parentId, originKind: values.originKind, originId: values.originId });
         if (values.originKind === "routine_execution") await notifyRoutineExecutionStatus(tx, values.id, companyId);
+        // Every issue creation reaches this one insert; the initial plan is
+        // checked here too so a refused plan never leaves a created issue.
+        assertNoForbiddenTerms(
+          [
+            { field: "title", text: values.title },
+            { field: "description", text: values.description },
+            { field: "initialPlan", text: initialPlan },
+          ],
+          {
+            surface: "issue_create",
+            companyId,
+            authorAgentId: issueData.createdByAgentId ?? null,
+            authorUserId: issueData.createdByUserId ?? null,
+          },
+        );
         const [issue] = await tx.insert(issues).values(values).returning();
         await attachOwnedDraftImages(tx, issue, issue.description, { userId: issueData.createdByUserId, agentId: issueData.createdByAgentId });
         if (issue.visibility === "private" && !inheritedPrivateSubtree && issueData.createdByAgentId) {
@@ -10897,6 +10913,15 @@ export function issueService(db: Db) {
       rows: ImportIssueRow[],
     ): Promise<void> => {
       if (rows.length === 0) return;
+      for (const row of rows) {
+        assertNoForbiddenTerms(
+          [
+            { field: "title", text: row.title },
+            { field: "description", text: row.description },
+          ],
+          { surface: "issue_import", issueId: row.id, companyId },
+        );
+      }
       const isolatedWorkspacesEnabled = (
         await instanceSettings.getExperimental()
       ).enableIsolatedWorkspaces;
@@ -11102,6 +11127,15 @@ export function issueService(db: Db) {
       rows: ImportIssueCommentRow[],
     ): Promise<void> => {
       if (rows.length === 0) return;
+      for (const row of rows) {
+        assertNoForbiddenTerms([{ field: "body", text: row.body }], {
+          surface: "issue_comment_import",
+          issueId: row.issueId,
+          companyId: row.companyId,
+          authorAgentId: row.authorAgentId ?? null,
+          authorUserId: row.authorUserId ?? null,
+        });
+      }
       const censorUsernameInLogs = (await instanceSettings.getGeneral())
         .censorUsernameInLogs;
       await db.transaction(async (tx) => {
@@ -11231,6 +11265,18 @@ export function issueService(db: Db) {
       postCommitActions?: IssuePostCommitAction[],
       options: { bindRuntimeSharedWorkspace?: boolean } = {},
     ) => {
+      assertNoForbiddenTerms(
+        [
+          { field: "title", text: data.title },
+          { field: "description", text: data.description },
+        ],
+        {
+          surface: "issue_update",
+          issueId: id,
+          authorAgentId: data.actorAgentId ?? null,
+          authorUserId: data.actorUserId ?? null,
+        },
+      );
       const ownedActivityPublications: ActivityPublication[] = [];
       const activityPublications =
         postCommitActivityPublications ?? ownedActivityPublications;

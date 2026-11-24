@@ -1359,6 +1359,46 @@ describeEmbeddedPostgres("status card routes", () => {
     expect(await service.tickDueStatusCards(new Date())).toMatchObject({ evaluated: 1, enqueued: [] });
   });
 
+  it("refuses a status-card summary carrying a forbidden term and stores no document", async () => {
+    const { enableForbiddenTermsForTest, expectForbiddenTermResponse, FORBIDDEN_TEST_TEXT } = await import("./helpers/forbidden-terms.js");
+    const company = await seedCompany();
+    await enableStatusCards();
+    const summarizer = await seedSummarizer(company.id);
+    const boardApp = createApp(db, localBoardActor());
+    const created = await request(boardApp)
+      .post(`/api/companies/${company.id}/status-cards`)
+      .send({ interestPrompt: "Blocked supplier tasks" });
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    const generationIssueId = created.body.generatingIssueId as string;
+    const run = await seedRun(company.id, summarizer.id);
+    await db.update(issues).set({ checkoutRunId: run.id }).where(eq(issues.id, generationIssueId));
+    const writerApp = createApp(db, agentActor(company.id, summarizer.id, run.id));
+    const queryWrite = await request(writerApp).put(`/api/status-cards/${created.body.id}/query`).send({
+      queries: [{ scope: "issues", status: ["blocked"], updatedWithin: "7d", sort: "updated", limit: 20, offset: 0 }],
+      title: "Supplier blockers",
+      changeSummary: "Compiled one blocker query.",
+      generationIssueId,
+    });
+    expect(queryWrite.status, JSON.stringify(queryWrite.body)).toBe(200);
+
+    const restore = enableForbiddenTermsForTest();
+    try {
+      for (const fields of [
+        { markdown: FORBIDDEN_TEST_TEXT, changeSummary: "First summary." },
+        { markdown: "Clean summary.", changeSummary: FORBIDDEN_TEST_TEXT },
+        { markdown: "Clean summary.", changeSummary: "First summary.", title: FORBIDDEN_TEST_TEXT },
+      ]) {
+        expectForbiddenTermResponse(await request(writerApp)
+          .put(`/api/status-cards/${created.body.id}/summary`)
+          .send({ ...fields, generationIssueId, model: "gpt-5.4" }));
+      }
+    } finally {
+      restore();
+    }
+    const [card] = await db.select().from(statusCards).where(eq(statusCards.id, created.body.id));
+    expect(card?.documentId ?? null).toBeNull();
+  });
+
   it("writes a compiled query and first summary, dry-runs live rows, and bumps the version after recompile", async () => {
     const company = await seedCompany();
     await enableStatusCards();

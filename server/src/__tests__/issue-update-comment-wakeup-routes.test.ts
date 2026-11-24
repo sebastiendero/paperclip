@@ -988,4 +988,28 @@ describe("issue update comment wakeups", () => {
     );
   });
 
+
+  it("refuses a PATCH whose title, description or comment contains a forbidden term before writing anything", async () => {
+    const { enableForbiddenTermsForTest, expectForbiddenTermResponse, FORBIDDEN_TEST_TEXT } = await import("./helpers/forbidden-terms.js");
+    const restore = enableForbiddenTermsForTest();
+    try {
+      const existing = makeIssue({ assigneeAgentId: ASSIGNEE_AGENT_ID, assigneeUserId: null });
+      mockIssueService.getById.mockResolvedValue(existing);
+
+      for (const body of [
+        { status: "in_progress", comment: FORBIDDEN_TEST_TEXT },
+        { title: FORBIDDEN_TEST_TEXT },
+        { description: FORBIDDEN_TEST_TEXT },
+      ]) {
+        const res = await request(await createApp())
+          .patch(`/api/issues/${existing.id}`)
+          .send(body);
+        expectForbiddenTermResponse(res);
+      }
+      expect(mockIssueService.update).not.toHaveBeenCalled();
+      expect(mockIssueService.addComment).not.toHaveBeenCalled();
+    } finally {
+      restore();
+    }
+  });
 });
